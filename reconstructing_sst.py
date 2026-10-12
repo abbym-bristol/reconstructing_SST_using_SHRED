@@ -22,6 +22,7 @@ import random
 # Third-party imports
 import numpy as np
 import torch
+from scipy.interpolate import RBFInterpolator
 from sklearn.preprocessing import MinMaxScaler
 
 # Local imports
@@ -188,6 +189,24 @@ def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor
     return datasets
 
 
+def recons_truth_save(save_path, test_recons, test_ground_truth):
+    """Save reconstructions and ground truth data
+    
+    Args:
+        save_path (tuple): file paths to save results under (experiment directory, model directory)
+        test_recons (TBC): 
+        test_ground_truth (TBC):
+    Returns:
+        None
+    """
+    np.save(f"{save_path[1]}/recons", test_recons)  # save for the model
+    if not os.path.isfile(f"{save_path[0]}/truth.npy"):
+        np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
+    else:
+        if not np.load(f"{save_path[0]}/truth.npy") == test_ground_truth:  # check truth was the same for this model
+            raise ValueError("Ground truth has changed compared to existing saved file")
+
+
 def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, save_path, sequence_model):
     """Train, validate and test the model
     
@@ -222,12 +241,7 @@ def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, sa
     print('Test Reconstruction Error: ')
     print(np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth))
 
-    np.save(f"{save_path[1]}/recons", test_recons)  # save for the model
-    if not os.path.isfile(f"{save_path[0]}/truth.npy"):
-        np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
-    else:
-        if not np.load(f"{save_path[0]}/truth.npy") == test_ground_truth:  # check truth was the same for this model
-            raise ValueError("Ground truth has changed compared to existing saved file")
+    recons_truth_save(save_path, test_recons, test_ground_truth)
 
 
 def pod_reconstructions(data_transformed, dates, lags, num_sensors, save_path, sensor_locations, sensor_placement, U_r):
@@ -268,13 +282,50 @@ def pod_reconstructions(data_transformed, dates, lags, num_sensors, save_path, s
     coeffs, *_ = np.linalg.lstsq(A, test_input.T, rcond=None)
     test_recons = (U_r @ coeffs).T
 
-    # Saving TODO - make this a function
-    np.save(f"{save_path[1]}/recons", test_recons)  # save for the model
-    if not os.path.isfile(f"{save_path[0]}/truth.npy"):
-        np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
-    else:
-        if not np.load(f"{save_path[0]}/truth.npy") == test_ground_truth:  # check truth was the same for this model
-            raise ValueError("Ground truth has changed compared to existing saved file")
+    # Saving
+    recons_truth_save(save_path, test_recons, test_ground_truth)
+    # Save metadata
+    metadata = {
+        "test_lag_dates": test_lag_dates
+    }
+    with open(f"{save_path[1]}/metadata.json", 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, cls=JsonEncoder)
+
+
+def rbfi_reconstructions(data_transformed, dates, lags, num_sensors, save_path, sensor_coords, sensor_placement):
+    """TBC
+
+    Args:
+        data_transformed (dict): transformed datasets, stored as {train, val, test}
+        dates (dict): corresponding dates, stored as {train, val, test}
+        lags (int): sequence length in weeks
+        num_sensors (int): number of synthetic sensors to use
+        save_path (tuple): file paths to save results under (experiment directory, model directory)
+        sensor_coords (numpy array): Latitude and Longitude coordinates corresponding to sensor_locations
+        sensor_placement (str): type of sensor placement to use; choices are random or QR
+
+    Returns:
+        Saves out the reconstructions produced by the model (and the corresponding ground truth)
+        Saves a metadata file for the model, containing
+            test_lag_dates (numpy array): lag dates that correspond with the sequenced test data used
+    """
+    test_input, test_ground_truth = create_pod_test_data(data_transformed["test"], sensor_locations, test_lags=lags)
+    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
+
+    points = np.array([[sensor_coords[0][i], sensor_coords[1][i]] for i in range(len(sensor_coords[0]))])
+    full_coords = np.column_stack([longs, lats])
+
+    rbf_recons = np.zeros((len(test_input), len(lats)))
+    for j, data in enumerate(test_input):
+        interpolator = RBFInterpolator(
+            points,
+            data,
+            kernel='thin_plate_spline',
+            smoothing=0.0,      # raise this (e.g. 1e-2–1e0) if sensors are noisy
+        )
+        rbf_recons[j] = interpolator(full_coords)
+
+    recons_truth_save(save_path, rbf_recons, test_ground_truth)
     # Save metadata
     metadata = {
         "test_lag_dates": test_lag_dates
@@ -345,6 +396,10 @@ if __name__ == "__main__":
             pod_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
                                 num_sensors=args.num_sensors, save_path=(directory, model_directory),
                                 sensor_locations=sensor_locations, sensor_placement=args.sensor_placement, U_r=U_r)
+        elif args.model_type == "RBFI":
+            rbfi_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
+                                num_sensors=args.num_sensors, save_path=(directory, model_directory),
+                                sensor_locations=sensor_locations, sensor_placement=args.sensor_placement)
 
 """
 References:
