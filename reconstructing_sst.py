@@ -51,7 +51,7 @@ def load_dataset(area, dataset):
         data (numpy array): SST data
         lats (numpy array): array of latitudes corresponding to SST values
         longs (numpy array): array of longitudes corresponding to SST values
-        dates (numpy array): array of dates corresponding to SST values (bodged by me bc original SHRED doesn't do this)
+        dates (numpy array): array of dates corresponding to SST values
     """
     if dataset == "NOAA":
         data, lats, longs, dates = noaa_data.load_data()
@@ -67,53 +67,28 @@ def load_dataset(area, dataset):
     return data, lats, longs, dates
 
 
-def build_sequences(model_type, data_transformed, dates, lags, sensor_locations):
-    """Build sequences for each model type
+def preprocess_data(anomaly, data, dates, num_sensors, save_path, sensor_placement):
+    """Preprocess data with varying numbers of static sensors placed randomly
 
     Args:
-        model_type (str): Type of model to train; choices are one of: SHRED, SDN, POD, RBFI
-        data_transformed (dict): transformed datasets, stored as {train, val, test}
-        dates (dict): corresponding dates, stored as {train, val, test}
-        lags (int): Sequence length in weeks
-        sensor_locations (list): Sensor locations corresponding to indices in the full-field data
- 
+        anomaly (Bool): whether or not to use anomalies
+        data (numpy array): SST data
+        dates (numpy array): array of dates corresponding to SST values
+        num_sensors (int): number of synthetic sensors to use
+        save_path (str): file path to save results under
+        sensor_placement (str): type of sensor placement to use; choices are random or QR
+
     Returns:
-        tbc
-
-    """
-    # Build sequences
-    if model_type == "SHRED":
-        train_dataset = create_shred_sequences(data_transformed["train"], sensor_locations, lags=lags)
-        val_dataset = create_shred_sequences(data_transformed["val"], sensor_locations, lags=lags)
-        test_dataset = create_shred_sequences(data_transformed["test"], sensor_locations, lags=lags)
-
-        # Get dates corresponding to the predictions made by the model
-        train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
-        val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
-        test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
-
-    elif model_type == "SDN":
-        # TODO - verify type of SDN sequences, how much data etc, write comment explaining exactly how the sequences match
-        train_dataset = create_sdn_datasets(data_transformed["train"], sensor_locations, test_lags=lags)
-        val_dataset = create_sdn_datasets(data_transformed["val"], sensor_locations, test_lags=lags)
-        # Generate test set to match SHRED test set
-        # (use final sensor results for what each sequence would be if using SHRED)
-        test_dataset = create_sdn_datasets(data_transformed["test"], sensor_locations, test_lags=lags)
-
-    train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
-    val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
-    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
-    lag_dates = {"train": train_lag_dates, "val": val_lag_dates, "test": test_lag_dates}
-
-    return train_dataset, val_dataset, test_dataset, lag_dates
-
-
-def preprocess_data(anomaly, lags, model_type, num_sensors, save_path, sensor_placement):
-    """Preprocess data with varying numbers of static sensors placed randomly
+        data_dict (dict): dictionary contianing train, val and test data (after preprocessing, but before sequencing)
+        dates_dict (dict): dictionary containing dates that correspond with the train, val and test data in data_dict
+        sc (class): MinMaxScaler() class fitted on the training data
+        sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
     
-    TBC
+    Saves a metadata file for the experiment version, containing:
+        sensor_locations (see Returns)
+        sensor_coords (numpy array): Latitude and Longitude coordinates corresponding to sensor_locations
+        dates_dict (see Returns)
     """
-    
     print("Preprocessing data...")
     train_data, val_data, test_data, train_dates, val_dates, test_dates = split_ordered_data(data, dates, all_dates=True)
     dates_dict = {"train": train_dates, "val": val_dates, "test": test_dates}
@@ -143,26 +118,91 @@ def preprocess_data(anomaly, lags, model_type, num_sensors, save_path, sensor_pl
     sensor_coords=(longs[sensor_locations], lats[sensor_locations])
     print(f"Sensor location indexes will be: {sensor_locations}")
 
-    # Build sequences
-    train_dataset, val_dataset, test_dataset, lag_dates = build_sequences(model_type, data_dict, dates_dict, lags, sensor_locations)
-    datasets = {"train": train_dataset, "val": val_dataset, "test": test_dataset}
-
     # Save metadata
     metadata = {
         "sensor_locations": list(sensor_locations),
         "sensor_coords": list(sensor_coords),
-        "lag_dates": lag_dates
+        "dates": dates_dict
     }
     if anomaly:
         metadata["bulk_mean"] = bulk_mean
-    with open(f"{save_path}/metadata_n{num_sensors}_l{lags}.json", 'w', encoding='utf-8') as f:
+    with open(f"{save_path}/metadata.json", 'w', encoding='utf-8') as f:
         json.dump(metadata, f, cls=JsonEncoder)
 
-    return datasets, lag_dates, sc
+    return data_dict, dates_dict, sc, sensor_locations
 
 
-def train_val_test(datasets, hidden_dim, lags, model_type, norm_model, num_sensors, save_path, sequence_model):
-    """TBC"""
+def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor_locations):
+    """Build sequences for each model type
+
+    Args:
+        model_type (str): type of model to train; choices are one of: SHRED, SDN, POD, RBFI
+        data_transformed (dict): transformed datasets, stored as {train, val, test}
+        dates (dict): corresponding dates, stored as {train, val, test}
+        lags (int): sequence length in weeks
+        save_path (str): file path to save results under
+        sensor_locations (list): sensor locations corresponding to indices in the full-field data
+ 
+    Returns:
+        datasets (dict): dictionary containing the sequenced datasets (train, val and test)
+    
+    Saves a metadata file for the model, containing:
+        sensor_locations (see Args)
+        lag_dates (dict): dictionary containing dates that correspond with the train, val and test data in datasets
+    """
+    # Build sequences
+    if model_type == "SHRED":
+        train_dataset = create_shred_sequences(data_transformed["train"], sensor_locations, lags=lags)
+        val_dataset = create_shred_sequences(data_transformed["val"], sensor_locations, lags=lags)
+        test_dataset = create_shred_sequences(data_transformed["test"], sensor_locations, lags=lags)
+
+        # Get dates corresponding to the predictions made by the model
+        train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
+        val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
+        test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
+
+    elif model_type == "SDN":
+        # TODO - verify type of SDN sequences, how much data etc, write comment explaining exactly how the sequences match
+        train_dataset = create_sdn_datasets(data_transformed["train"], sensor_locations, test_lags=lags)
+        val_dataset = create_sdn_datasets(data_transformed["val"], sensor_locations, test_lags=lags)
+        # Generate test set to match SHRED test set
+        # (use final sensor results for what each sequence would be if using SHRED)
+        test_dataset = create_sdn_datasets(data_transformed["test"], sensor_locations, test_lags=lags)
+    datasets = {"train": train_dataset, "val": val_dataset, "test": test_dataset}
+
+    train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
+    val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
+    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
+    lag_dates = {"train": train_lag_dates, "val": val_lag_dates, "test": test_lag_dates}
+
+    # Save metadata
+    metadata = {
+        "sensor_locations": list(sensor_locations),
+        "lag_dates": lag_dates
+    }
+    with open(f"{save_path}/metadata.json", 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, cls=JsonEncoder)
+
+    return datasets
+
+
+def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, save_path, sequence_model):
+    """Train, validate and test the model
+    
+    Args:
+        datasets (dict): dictionary containing the sequenced datasets (train, val and test)
+        hidden_dim (int): hidden dimension for the sequence model
+        model_type (str): model type to train; one of SHRED, SDN, POD, RBFI
+        norm_model (class): MinMaxScaler() class fitted on the training data
+        num_sensors (int): number of synthetic sensors to use
+        save_path (tuple): file paths to save results under (experiment directory, model directory)
+        sequence_model (str): sequence model to use; one of LSTM or GRU
+
+    Returns:
+        None
+
+    Saves out the reconstructions produced by the model (and the corresponding ground truth) under save_path
+    """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     if model_type == "SHRED":
@@ -180,9 +220,12 @@ def train_val_test(datasets, hidden_dim, lags, model_type, norm_model, num_senso
     print('Test Reconstruction Error: ')
     print(np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth))
 
-    np.save(f"{save_path}/recons_n{num_sensors}_l{lags}", test_recons)
-    np.save(f"{save_path}/truth_n{num_sensors}_l{lags}", test_ground_truth)
-    
+    np.save(f"{save_path[1]}/recons_{i}", test_recons)  # save for the model
+    if not os.path.isfile(f"{save_path[0]}/truth.npy"):
+        np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
+    else:
+        if not np.load(f"{save_path[0]}/truth.npy") == test_ground_truth:  # check truth was the same for this model
+            raise ValueError("Ground truth has changed compared to existing saved file")
 
 
 if __name__ == "__main__":
@@ -209,31 +252,40 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    
-    
-
     # Train models
     # if args.train:
         # print("Mode: Train models")
     
     # Load and reformat data
+    path = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
+    directory = os.path.join(args.filepath, path)
+    print("Saving metadata under: ", directory)
+    os.makedirs(directory, exist_ok=True)
+
     data, lats, longs, dates = load_dataset(args.area, args.dataset)
-    datasets, lag_dates, norm_model = preprocess_data(anomaly=args.anomaly, lags=args.lags, model_type=args.model_type,
-                                                      num_sensors=args.num_sensors, save_path=directory, sensor_placement=args.sensor_placement)
+    pp_data, dates_dict, norm_model, sensor_locations = preprocess_data(anomaly=args.anomaly, data=data, dates=dates,
+                                                                        num_sensors=args.num_sensors, save_path=directory,
+                                                                        sensor_placement=args.sensor_placement)
+
     for model_type in args.models:
         # Storage
         if args.model_type == "SHRED":
             model_name = f"{args.model_type}-{args.sequence}"
         elif args.model_type == "SDN":
             model_name = args.model_type
-        exp_name = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}/{model_name}"
-        print("Experiment: ", exp_name)
+        model_path = path + f"/{model_name}" 
+
         # Make experiment folder
-        directory = os.path.join(args.filepath, exp_name)
+        model_directory = os.path.join(args.filepath, model_path)
+        print("Saving results under: ", directory)
         os.makedirs(directory, exist_ok = True)
 
+        # Build sequences
+        datasets = build_sequences(model_type, pp_data, dates_dict, args.lags, sensor_locations)
+
+        # Train, val and test models
         train_val_test(datasets=datasets, hidden_dim=args.hidden_dim, lags=args.lags, model_type=args.model_type,
-                       norm_model=norm_model, num_sensors=args.num_sensors, save_path=directory, sequence_model=args.sequence_model)
+                       norm_model=norm_model, num_sensors=args.num_sensors, save_path=(directory, model_directory), sequence_model=args.sequence_model)
         
 
 """
