@@ -204,7 +204,7 @@ def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, sa
     Saves out the reconstructions produced by the model (and the corresponding ground truth) under save_path
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
+    # TODO - add mutliple training and saving (interun variability)
     if model_type == "SHRED":
         model = models.SHRED(num_sensors, len(lats), seq_model=sequence_model, hidden_size=hidden_dim,
                             hidden_layers=2, l1=350, l2=400, dropout=0.1).to(device)
@@ -220,7 +220,7 @@ def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, sa
     print('Test Reconstruction Error: ')
     print(np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth))
 
-    np.save(f"{save_path[1]}/recons_{i}", test_recons)  # save for the model
+    np.save(f"{save_path[1]}/recons", test_recons)  # save for the model
     if not os.path.isfile(f"{save_path[0]}/truth.npy"):
         np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
     else:
