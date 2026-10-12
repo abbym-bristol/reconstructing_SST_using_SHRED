@@ -26,7 +26,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 # Local imports
 from helper_functions import models, noaa_data, ofam3_data
-from helper_functions.pod import qr_place
+from helper_functions.pod import create_pod_test_data, qr_place, svd_basis
 from helper_functions.preprocess_SDN import create_sdn_datasets
 from helper_functions.preprocess_SHRED import (
     convert_to_anomaly,
@@ -83,6 +83,7 @@ def preprocess_data(anomaly, data, dates, num_sensors, save_path, sensor_placeme
         dates_dict (dict): dictionary containing dates that correspond with the train, val and test data in data_dict
         sc (class): MinMaxScaler() class fitted on the training data
         sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
+        U_r (numpy array): POD basis of the first num_sensors POD modes
     
     Saves a metadata file for the experiment version, containing:
         sensor_locations (see Returns)
@@ -108,9 +109,11 @@ def preprocess_data(anomaly, data, dates, num_sensors, save_path, sensor_placeme
     if sensor_placement == "random":
         # Set sensor locations
         sensor_locations = np.random.choice(data.shape[1], size=num_sensors, replace=False)
+        # Set POD basis
+        U_r = svd_basis(train_data, num_sensors)
 
     elif sensor_placement == "QR":
-        sensor_locations, _ = qr_place(train_data, num_sensors)
+        sensor_locations, U_r = qr_place(train_data, num_sensors)
 
     else:
         raise ValueError("Incorrect placement of sensors specified")
@@ -129,7 +132,7 @@ def preprocess_data(anomaly, data, dates, num_sensors, save_path, sensor_placeme
     with open(f"{save_path}/metadata.json", 'w', encoding='utf-8') as f:
         json.dump(metadata, f, cls=JsonEncoder)
 
-    return data_dict, dates_dict, sc, sensor_locations
+    return data_dict, dates_dict, sc, sensor_locations, U_r
 
 
 def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor_locations):
@@ -147,7 +150,6 @@ def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor
         datasets (dict): dictionary containing the sequenced datasets (train, val and test)
     
     Saves a metadata file for the model, containing:
-        sensor_locations (see Args)
         lag_dates (dict): dictionary containing dates that correspond with the train, val and test data in datasets
     """
     # Build sequences
@@ -168,6 +170,7 @@ def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor
         # Generate test set to match SHRED test set
         # (use final sensor results for what each sequence would be if using SHRED)
         test_dataset = create_sdn_datasets(data_transformed["test"], sensor_locations, test_lags=lags)
+
     datasets = {"train": train_dataset, "val": val_dataset, "test": test_dataset}
 
     train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
@@ -177,7 +180,6 @@ def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor
 
     # Save metadata
     metadata = {
-        "sensor_locations": list(sensor_locations),
         "lag_dates": lag_dates
     }
     with open(f"{save_path}/metadata.json", 'w', encoding='utf-8') as f:
@@ -201,7 +203,7 @@ def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, sa
     Returns:
         None
 
-    Saves out the reconstructions produced by the model (and the corresponding ground truth) under save_path
+    Saves out the reconstructions produced by the model (and the corresponding ground truth)
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # TODO - add mutliple training and saving (interun variability)
@@ -226,6 +228,59 @@ def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, sa
     else:
         if not np.load(f"{save_path[0]}/truth.npy") == test_ground_truth:  # check truth was the same for this model
             raise ValueError("Ground truth has changed compared to existing saved file")
+
+
+def pod_reconstructions(data_transformed, dates, lags, num_sensors, save_path, sensor_locations, sensor_placement, U_r):
+    """TBC
+
+    Args:
+        data_transformed (dict): transformed datasets, stored as {train, val, test}
+        dates (dict): corresponding dates, stored as {train, val, test}
+        lags (int): sequence length in weeks
+        num_sensors (int): number of synthetic sensors to use
+        save_path (tuple): file paths to save results under (experiment directory, model directory)
+        sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
+        sensor_placement (str): type of sensor placement to use; choices are random or QR
+        U_r (numpy array): POD basis of the first num_sensors POD modes
+
+    Returns:
+        Saves out the reconstructions produced by the model (and the corresponding ground truth)
+        Saves a metadata file for the model, containing
+            test_lag_dates (numpy array): lag dates that correspond with the sequenced test data used
+    """
+    test_input, test_ground_truth = create_pod_test_data(data_transformed["test"], sensor_locations, test_lags=lags)
+    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
+
+    C = np.zeros((num_sensors, len(lats)))
+    for i in range(num_sensors):
+        C[i, sensor_locations[i]] = 1
+
+    for row in C:
+        print(row)
+
+    A = C @ U_r
+
+    cond = np.linalg.cond(A)
+    if cond > 1e10:
+        print(f"Warning: C @ U_r is ill-conditioned (cond={cond:.2e}) "
+            f"for placement='{sensor_placement}'.")
+
+    coeffs, *_ = np.linalg.lstsq(A, test_input.T, rcond=None)
+    test_recons = (U_r @ coeffs).T
+
+    # Saving TODO - make this a function
+    np.save(f"{save_path[1]}/recons", test_recons)  # save for the model
+    if not os.path.isfile(f"{save_path[0]}/truth.npy"):
+        np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
+    else:
+        if not np.load(f"{save_path[0]}/truth.npy") == test_ground_truth:  # check truth was the same for this model
+            raise ValueError("Ground truth has changed compared to existing saved file")
+    # Save metadata
+    metadata = {
+        "test_lag_dates": test_lag_dates
+    }
+    with open(f"{save_path[1]}/metadata.json", 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, cls=JsonEncoder)
 
 
 if __name__ == "__main__":
@@ -263,7 +318,7 @@ if __name__ == "__main__":
     os.makedirs(directory, exist_ok=True)
 
     data, lats, longs, dates = load_dataset(args.area, args.dataset)
-    pp_data, dates_dict, norm_model, sensor_locations = preprocess_data(anomaly=args.anomaly, data=data, dates=dates,
+    pp_data, dates_dict, norm_model, sensor_locations, U_r = preprocess_data(anomaly=args.anomaly, data=data, dates=dates,
                                                                         num_sensors=args.num_sensors, save_path=directory,
                                                                         sensor_placement=args.sensor_placement)
 
@@ -281,12 +336,15 @@ if __name__ == "__main__":
         os.makedirs(directory, exist_ok = True)
 
         # Build sequences
-        datasets = build_sequences(model_type, pp_data, dates_dict, args.lags, sensor_locations)
-
-        # Train, val and test models
-        train_val_test(datasets=datasets, hidden_dim=args.hidden_dim, lags=args.lags, model_type=args.model_type,
-                       norm_model=norm_model, num_sensors=args.num_sensors, save_path=(directory, model_directory), sequence_model=args.sequence_model)
-        
+        if args.model_type in ["SHRED", "SDN"]:
+            datasets = build_sequences(model_type, pp_data, dates_dict, args.lags, sensor_locations)
+            # Train, val and test models
+            train_val_test(datasets=datasets, hidden_dim=args.hidden_dim, lags=args.lags, model_type=args.model_type,
+                           norm_model=norm_model, num_sensors=args.num_sensors, save_path=(directory, model_directory), sequence_model=args.sequence_model)
+        elif args.model_type == "POD":
+            pod_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
+                                num_sensors=args.num_sensors, save_path=(directory, model_directory),
+                                sensor_locations=sensor_locations, sensor_placement=args.sensor_placement, U_r=U_r)
 
 """
 References:
