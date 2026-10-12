@@ -1,0 +1,252 @@
+"""TBC
+
+Datasets:
+
+NOAA: 
+- Weekly mean sea-surface temperature at 1° resolution, as given by the NOAA Optimum Interpolation SST V2 dataset [1]
+- specifically, using the version taken from the Williams et al. pyshred implementation [2]
+
+OFAM3: 
+- ME4OH full-field dataset at 1/4° resolution generated from the OFAM3 numerical model [3].
+
+Models:
+- Static SHRED & SDN from [4, 5]
+"""
+
+# Standard imports
+import argparse
+import json
+import os
+import random
+
+# Third-party imports
+import numpy as np
+import torch
+from sklearn.preprocessing import MinMaxScaler
+
+# Local imports
+from helper_functions import models, noaa_data, ofam3_data
+from helper_functions.pod import qr_place
+from helper_functions.preprocess_SDN import create_sdn_datasets
+from helper_functions.preprocess_SHRED import (
+    convert_to_anomaly,
+    create_shred_sequences,
+    split_ordered_data,
+)
+from helper_functions.saving import JsonEncoder
+
+np.random.seed(42)
+random.seed(42)
+
+#-------------------- SET UP --------------------#
+
+def load_dataset(area, dataset):
+    """For a given dataset type (OFAM3 or NOAA) load and filter to a specified area (world, NA or GS)
+    
+    Args:
+        area (str): area of ocean to use
+        dataset (str): dataset type to use
+
+    Returns:
+        data (numpy array): SST data
+        lats (numpy array): array of latitudes corresponding to SST values
+        longs (numpy array): array of longitudes corresponding to SST values
+        dates (numpy array): array of dates corresponding to SST values (bodged by me bc original SHRED doesn't do this)
+    """
+    if dataset == "NOAA":
+        data, lats, longs, dates = noaa_data.load_data()
+
+        if area != "world":
+            data, lats, longs = noaa_data.crop_to_area(data, lats, longs, area=area)
+
+    elif dataset == "OFAM3":
+        data, dates, lats, longs = ofam3_data.load_files(file_path=f"Data/OFAM3/{area}/")
+
+    print(data.shape, len(longs), len(lats))
+
+    return data, lats, longs, dates
+
+
+def build_sequences(model_type, data_transformed, dates, lags, sensor_locations):
+    """Build sequences for each model type
+
+    Args:
+        model_type (str): Type of model to train; choices are one of: SHRED, SDN, POD, RBFI
+        data_transformed (dict): transformed datasets, stored as {train, val, test}
+        dates (dict): corresponding dates, stored as {train, val, test}
+        lags (int): Sequence length in weeks
+        sensor_locations (list): Sensor locations corresponding to indices in the full-field data
+ 
+    Returns:
+        tbc
+
+    """
+    # Build sequences
+    if model_type == "SHRED":
+        train_dataset = create_shred_sequences(data_transformed["train"], sensor_locations, lags=lags)
+        val_dataset = create_shred_sequences(data_transformed["val"], sensor_locations, lags=lags)
+        test_dataset = create_shred_sequences(data_transformed["test"], sensor_locations, lags=lags)
+
+        # Get dates corresponding to the predictions made by the model
+        train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
+        val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
+        test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
+
+    elif model_type == "SDN":
+        # TODO - verify type of SDN sequences, how much data etc, write comment explaining exactly how the sequences match
+        train_dataset = create_sdn_datasets(data_transformed["train"], sensor_locations, test_lags=lags)
+        val_dataset = create_sdn_datasets(data_transformed["val"], sensor_locations, test_lags=lags)
+        # Generate test set to match SHRED test set
+        # (use final sensor results for what each sequence would be if using SHRED)
+        test_dataset = create_sdn_datasets(data_transformed["test"], sensor_locations, test_lags=lags)
+
+    train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
+    val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
+    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
+    lag_dates = {"train": train_lag_dates, "val": val_lag_dates, "test": test_lag_dates}
+
+    return train_dataset, val_dataset, test_dataset, lag_dates
+
+
+def preprocess_data(anomaly, lags, model_type, num_sensors, save_path, sensor_placement):
+    """Preprocess data with varying numbers of static sensors placed randomly
+    
+    TBC
+    """
+    
+    print("Preprocessing data...")
+    train_data, val_data, test_data, train_dates, val_dates, test_dates = split_ordered_data(data, dates, all_dates=True)
+    dates_dict = {"train": train_dates, "val": val_dates, "test": test_dates}
+    if anomaly:
+        train_data, val_data, test_data, bulk_mean = convert_to_anomaly((train_data, val_data, test_data))
+
+    # Normalise data
+    sc = MinMaxScaler()
+    sc = sc.fit(train_data)  # Computes min and max from training data only (prevent data leakage)
+    data_dict = {
+        "train": sc.transform(train_data),
+        "val": sc.transform(val_data),
+        "test": sc.transform(test_data)
+    }
+
+    # Sensor placement
+    if sensor_placement == "random":
+        # Set sensor locations
+        sensor_locations = np.random.choice(data.shape[1], size=num_sensors, replace=False)
+
+    elif sensor_placement == "QR":
+        sensor_locations, _ = qr_place(train_data, num_sensors)
+
+    else:
+        raise ValueError("Incorrect placement of sensors specified")
+
+    sensor_coords=(longs[sensor_locations], lats[sensor_locations])
+    print(f"Sensor location indexes will be: {sensor_locations}")
+
+    # Build sequences
+    train_dataset, val_dataset, test_dataset, lag_dates = build_sequences(model_type, data_dict, dates_dict, lags, sensor_locations)
+    datasets = {"train": train_dataset, "val": val_dataset, "test": test_dataset}
+
+    # Save metadata
+    metadata = {
+        "sensor_locations": list(sensor_locations),
+        "sensor_coords": list(sensor_coords),
+        "lag_dates": lag_dates
+    }
+    if anomaly:
+        metadata["bulk_mean"] = bulk_mean
+    with open(f"{save_path}/metadata_n{num_sensors}_l{lags}.json", 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, cls=JsonEncoder)
+
+    return datasets, lag_dates, sc
+
+
+def train_val_test(datasets, hidden_dim, lags, model_type, norm_model, num_sensors, save_path, sequence_model):
+    """TBC"""
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    if model_type == "SHRED":
+        model = models.SHRED(num_sensors, len(lats), seq_model=sequence_model, hidden_size=hidden_dim,
+                            hidden_layers=2, l1=350, l2=400, dropout=0.1).to(device)
+    elif model_type == "SDN":
+        model = models.SDN(num_sensors, len(lats), l1=350, l2=400, dropout=0.1).to(device)
+
+    validation_errors = models.fit(model, datasets["train"], datasets["val"], batch_size=64, num_epochs=1000, lr=1e-3, verbose=True, patience=5)
+    print('Validation Reconstruction Error: ', validation_errors)
+
+    # Test
+    test_recons = norm_model.inverse_transform(model(datasets["test"].X).detach().cpu().numpy())
+    test_ground_truth = norm_model.inverse_transform(datasets["test"].Y.detach().cpu().numpy())
+    print('Test Reconstruction Error: ')
+    print(np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth))
+
+    np.save(f"{save_path}/recons_n{num_sensors}_l{lags}", test_recons)
+    np.save(f"{save_path}/truth_n{num_sensors}_l{lags}", test_ground_truth)
+    
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    # Required (standard)
+    parser.add_argument("version", help="Version indicator (str) for saving, e.g. the date in format 051026")
+    parser.add_argument("dataset", help="Dataset type to use", choices=["OFAM3", "NOAA"])
+    parser.add_argument("models", help="List of model types to train; choices are SHRED, SDN, POD, RBFI")
+    parser.add_argument("sensor_placement", help="Type of sensor placement to use; choices are random or QR", choices=["random", "QR"])
+    parser.add_argument("num_sensors", help="Number of synthetic sensors to use, integer", type=int)
+
+    # Optional - Bool flags
+    parser.add_argument("-a", "--anomaly", action="store_true", help="Use anomalies to train if this flag is used")
+    # parser.add_argument("-e", "--eval", action="store_true", help="Evaluate reconstructions if this flag is used")
+    # parser.add_argument("-t", "--train", action="store_true", help="Train models if this flag is used")
+
+    # Optional - defaults set
+    parser.add_argument("-f", "--filepath", help="File path to save results under",
+                        default="Reconstructions/Static/")
+    parser.add_argument("-d", "--hiddendim", help="Hidden dimension for sequence model", type=int, default=128)
+    parser.add_argument("-s", "--sequence", help="Sequence model to use", default="LSTM", choices=["LSTM", "GRU"])
+    parser.add_argument("-l", "--lags", help="Lags (sequence length in weeks)", default=52, type=int)
+    parser.add_argument("-r", "--area", help="Area of ocean to use", default="NA", choices=["world", "NA", "GS"])
+
+    args = parser.parse_args()
+
+    
+    
+
+    # Train models
+    # if args.train:
+        # print("Mode: Train models")
+    
+    # Load and reformat data
+    data, lats, longs, dates = load_dataset(args.area, args.dataset)
+    datasets, lag_dates, norm_model = preprocess_data(anomaly=args.anomaly, lags=args.lags, model_type=args.model_type,
+                                                      num_sensors=args.num_sensors, save_path=directory, sensor_placement=args.sensor_placement)
+    for model_type in args.models:
+        # Storage
+        if args.model_type == "SHRED":
+            model_name = f"{args.model_type}-{args.sequence}"
+        elif args.model_type == "SDN":
+            model_name = args.model_type
+        exp_name = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}/{model_name}"
+        print("Experiment: ", exp_name)
+        # Make experiment folder
+        directory = os.path.join(args.filepath, exp_name)
+        os.makedirs(directory, exist_ok = True)
+
+        train_val_test(datasets=datasets, hidden_dim=args.hidden_dim, lags=args.lags, model_type=args.model_type,
+                       norm_model=norm_model, num_sensors=args.num_sensors, save_path=directory, sequence_model=args.sequence_model)
+        
+
+"""
+References:
+[1] NOAA dataset origin, https://psl.noaa.gov/data/gridded/data.noaa.oisst.v2.html
+
+[2] Jan P Williams, pyshred repository, NOAA SST dataset, https://github.com/Jan-Williams/pyshred/blob/main/Data/SST_data.mat
+
+[3] CSIRO ME4OH OFAM3 dataset, v9, https://data.csiro.au/collection/csiro%3A60826v9
+
+[4] Jan P Williams, pyshred repository, SHRED and SDN model implementations, https://github.com/Jan-Williams/pyshred/blob/main/models.py
+
+[5] Jan P Williams, Olivia Zahn, and J Nathan Kutz. Sensing with shallow recurrent decoder networks. 
+Proceedings of the Royal Society A: Mathematical, Physical and Engineering Sciences, 480(2298), 2024,
+https://royalsocietypublishing.org/rspa/article/480/2298/20240054/66770/.
+"""
