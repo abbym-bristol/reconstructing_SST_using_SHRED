@@ -207,8 +207,8 @@ def recons_truth_save(save_path, test_recons, test_ground_truth):
             raise ValueError("Ground truth has changed compared to existing saved file")
 
 
-def train_val_test(datasets, hidden_dim, model_type, norm_model, num_sensors, save_path, sequence_model):
-    """Train, validate and test the model
+def train_shred_sdn(datasets, hidden_dim, model_type, norm_model, num_sensors, save_path, sequence_model):
+    """Train, validate and test SHRED or SDN models
     
     Args:
         datasets (dict): dictionary containing the sequenced datasets (train, val and test)
@@ -334,13 +334,18 @@ def rbfi_reconstructions(data_transformed, dates, lags, num_sensors, save_path, 
         json.dump(metadata, f, cls=JsonEncoder)
 
 
+# Define a custom argument type for a list of strings
+def list_of_strings(arg):
+    """Split list of strings into a list"""
+    return arg.split(',')
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Required (standard)
     parser.add_argument("version", help="Version indicator (str) for saving, e.g. the date in format 051026")
     parser.add_argument("dataset", help="Dataset type to use", choices=["OFAM3", "NOAA"])
-    parser.add_argument("models", help="List of model types to train; choices are SHRED, SDN, POD, RBFI")
-    parser.add_argument("sensor_placement", help="Type of sensor placement to use; choices are random or QR", choices=["random", "QR"])
+    parser.add_argument("models", help="List of model types to train; choices are SHRED,SDN,POD,RBFI. Format as comma separated string (with no spaces)", type=list_of_strings)
     parser.add_argument("num_sensors", help="Number of synthetic sensors to use, integer", type=int)
 
     # Optional - Bool flags
@@ -351,10 +356,11 @@ if __name__ == "__main__":
     # Optional - defaults set
     parser.add_argument("-f", "--filepath", help="File path to save results under",
                         default="Reconstructions/Static/")
-    parser.add_argument("-d", "--hiddendim", help="Hidden dimension for sequence model", type=int, default=128)
-    parser.add_argument("-s", "--sequence", help="Sequence model to use", default="LSTM", choices=["LSTM", "GRU"])
+    parser.add_argument("-d", "--hidden_dim", help="Hidden dimension for sequence model", type=int, default=128)
+    parser.add_argument("-s", "--sequence_model", help="Sequence model to use", default="LSTM", choices=["LSTM", "GRU"])
     parser.add_argument("-l", "--lags", help="Lags (sequence length in weeks)", default=52, type=int)
     parser.add_argument("-r", "--area", help="Area of ocean to use", default="NA", choices=["world", "NA", "GS"])
+    parser.add_argument("-p", "--sensor_placement", help="Type of sensor placement to use; choices are random or QR", choices=["random", "QR"], default="random")
 
     args = parser.parse_args()
 
@@ -375,28 +381,28 @@ if __name__ == "__main__":
 
     for model_type in args.models:
         # Storage
-        if args.model_type == "SHRED":
-            model_name = f"{args.model_type}-{args.sequence}"
-        elif args.model_type == "SDN":
-            model_name = args.model_type
+        if model_type == "SHRED":
+            model_name = f"{model_type}-{args.sequence_model}"
+        elif model_type == "SDN":
+            model_name = model_type
         model_path = path + f"/{model_name}" 
 
         # Make experiment folder
         model_directory = os.path.join(args.filepath, model_path)
-        print("Saving results under: ", directory)
-        os.makedirs(directory, exist_ok = True)
+        print("Saving results under: ", model_directory)
+        os.makedirs(model_directory, exist_ok = True)
 
         # Build sequences
-        if args.model_type in ["SHRED", "SDN"]:
-            datasets = build_sequences(model_type, pp_data, dates_dict, args.lags, sensor_locations)
+        if model_type in ["SHRED", "SDN"]:
+            datasets = build_sequences(model_type, pp_data, dates_dict, args.lags, model_directory, sensor_locations)
             # Train, val and test models
-            train_val_test(datasets=datasets, hidden_dim=args.hidden_dim, lags=args.lags, model_type=args.model_type,
-                           norm_model=norm_model, num_sensors=args.num_sensors, save_path=(directory, model_directory), sequence_model=args.sequence_model)
-        elif args.model_type == "POD":
+            train_shred_sdn(datasets=datasets, hidden_dim=args.hidden_dim, model_type=model_type, norm_model=norm_model,
+                           num_sensors=args.num_sensors, save_path=(directory, model_directory), sequence_model=args.sequence_model)
+        elif model_type == "POD":
             pod_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
                                 num_sensors=args.num_sensors, save_path=(directory, model_directory),
                                 sensor_locations=sensor_locations, sensor_placement=args.sensor_placement, U_r=U_r)
-        elif args.model_type == "RBFI":
+        elif model_type == "RBFI":
             rbfi_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
                                 num_sensors=args.num_sensors, save_path=(directory, model_directory),
                                 sensor_locations=sensor_locations, sensor_placement=args.sensor_placement)
