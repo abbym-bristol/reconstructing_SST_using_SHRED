@@ -229,13 +229,14 @@ def train_shred_sdn(datasets, hidden_dim, model_type, norm_model, num_sensors, s
     recons_truth_save(save_path, test_recons, test_ground_truth)
 
 
-def pod_reconstructions(data_transformed, dates, lags, num_sensors, save_path, sensor_locations, sensor_placement, U_r):
+def pod_reconstructions(data_transformed, dates, lags, norm_model, num_sensors, save_path, sensor_locations, sensor_placement, U_r):
     """TBC
 
     Args:
         data_transformed (dict): transformed datasets, stored as {train, val, test}
         dates (dict): corresponding dates, stored as {train, val, test}
         lags (int): sequence length in weeks
+        norm_model (class): MinMaxScaler() class fitted on the training data
         num_sensors (int): number of synthetic sensors to use
         save_path (tuple): file paths to save results under (experiment directory, model directory)
         sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
@@ -265,7 +266,7 @@ def pod_reconstructions(data_transformed, dates, lags, num_sensors, save_path, s
     test_recons = (U_r @ coeffs).T
 
     # Saving
-    recons_truth_save(save_path, test_recons, test_ground_truth)
+    recons_truth_save(save_path, norm_model.inverse_transform(test_recons), norm_model.inverse_transform(test_ground_truth))
     # Save metadata
     metadata = {
         "test_lag_dates": test_lag_dates
@@ -274,17 +275,16 @@ def pod_reconstructions(data_transformed, dates, lags, num_sensors, save_path, s
         json.dump(metadata, f, cls=JsonEncoder)
 
 
-def rbfi_reconstructions(data_transformed, dates, lags, num_sensors, save_path, sensor_coords, sensor_placement):
+def rbfi_reconstructions(data_transformed, dates, lags, norm_model, save_path, sensor_coords):
     """TBC
 
     Args:
         data_transformed (dict): transformed datasets, stored as {train, val, test}
         dates (dict): corresponding dates, stored as {train, val, test}
         lags (int): sequence length in weeks
-        num_sensors (int): number of synthetic sensors to use
+        norm_model (class): MinMaxScaler() class fitted on the training data
         save_path (tuple): file paths to save results under (experiment directory, model directory)
         sensor_coords (numpy array): Latitude and Longitude coordinates corresponding to sensor_locations
-        sensor_placement (str): type of sensor placement to use; choices are random or QR
 
     Returns:
         Saves out the reconstructions produced by the model (and the corresponding ground truth)
@@ -307,7 +307,7 @@ def rbfi_reconstructions(data_transformed, dates, lags, num_sensors, save_path, 
         )
         rbf_recons[j] = interpolator(full_coords)
 
-    recons_truth_save(save_path, rbf_recons, test_ground_truth)
+    recons_truth_save(save_path, norm_model.inverse_transform(rbf_recons), norm_model.inverse_transform(test_ground_truth))
     # Save metadata
     metadata = {
         "test_lag_dates": test_lag_dates
@@ -377,12 +377,12 @@ if __name__ == "__main__":
                            num_sensors=args.num_sensors, save_path=(directory, model_directory))
         elif model_type == "POD":
             pod_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
-                                num_sensors=args.num_sensors, save_path=(directory, model_directory),
+                                num_sensors=args.num_sensors, norm_model=norm_model, save_path=(directory, model_directory),
                                 sensor_locations=sensor_locations, sensor_placement=args.sensor_placement, U_r=U_r)
         elif model_type == "RBFI":
-            rbfi_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
-                                num_sensors=args.num_sensors, save_path=(directory, model_directory),
-                                sensor_locations=sensor_locations, sensor_placement=args.sensor_placement)
+            rbfi_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags, 
+                                 norm_model=norm_model, save_path=(directory, model_directory),
+                                 sensor_locations=sensor_locations)
 
 """
 References:
