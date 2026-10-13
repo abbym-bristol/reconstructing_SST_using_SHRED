@@ -1,4 +1,4 @@
-"""TBC
+"""reconstructing_sst.py
 
 Datasets:
 
@@ -11,6 +11,9 @@ OFAM3:
 
 Models:
 - Static SHRED & SDN from [4, 5]
+- gappy POD: Partially adapted from qr_place in [4]
+- RBF Interpolation: using scipy implementation
+
 """
 
 # Standard imports
@@ -34,7 +37,7 @@ from helper_functions.preprocess_SHRED import (
     create_shred_sequences,
     split_ordered_data,
 )
-from helper_functions.saving import JsonEncoder
+from helper_functions.saving import JsonEncoder, recons_truth_save
 
 np.random.seed(42)
 random.seed(42)
@@ -63,7 +66,7 @@ def load_dataset(area, dataset):
     elif dataset == "OFAM3":
         data, dates, lats, longs = ofam3_data.load_files(file_path=f"Data/OFAM3/{area}/")
 
-    print(data.shape, len(longs), len(lats))
+    print(f"Number of weeks in data: {data.shape[0]}, number of lat/long positions: {data.shape[1]}")
 
     return data, lats, longs, dates
 
@@ -154,7 +157,7 @@ def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor
         lag_dates (dict): dictionary containing dates that correspond with the train, val and test data in datasets
     """
     # Build sequences
-    if model_type == "SHRED":
+    if "SHRED" in model_type:
         train_dataset = create_shred_sequences(data_transformed["train"], sensor_locations, lags=lags)
         val_dataset = create_shred_sequences(data_transformed["val"], sensor_locations, lags=lags)
         test_dataset = create_shred_sequences(data_transformed["test"], sensor_locations, lags=lags)
@@ -189,25 +192,7 @@ def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor
     return datasets
 
 
-def recons_truth_save(save_path, test_recons, test_ground_truth):
-    """Save reconstructions and ground truth data
-    
-    Args:
-        save_path (tuple): file paths to save results under (experiment directory, model directory)
-        test_recons (TBC): 
-        test_ground_truth (TBC):
-    Returns:
-        None
-    """
-    np.save(f"{save_path[1]}/recons", test_recons)  # save for the model
-    if not os.path.isfile(f"{save_path[0]}/truth.npy"):
-        np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
-    else:
-        if not np.load(f"{save_path[0]}/truth.npy") == test_ground_truth:  # check truth was the same for this model
-            raise ValueError("Ground truth has changed compared to existing saved file")
-
-
-def train_shred_sdn(datasets, hidden_dim, model_type, norm_model, num_sensors, save_path, sequence_model):
+def train_shred_sdn(datasets, hidden_dim, model_type, norm_model, num_sensors, save_path):
     """Train, validate and test SHRED or SDN models
     
     Args:
@@ -217,7 +202,6 @@ def train_shred_sdn(datasets, hidden_dim, model_type, norm_model, num_sensors, s
         norm_model (class): MinMaxScaler() class fitted on the training data
         num_sensors (int): number of synthetic sensors to use
         save_path (tuple): file paths to save results under (experiment directory, model directory)
-        sequence_model (str): sequence model to use; one of LSTM or GRU
 
     Returns:
         None
@@ -226,8 +210,9 @@ def train_shred_sdn(datasets, hidden_dim, model_type, norm_model, num_sensors, s
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # TODO - add mutliple training and saving (interun variability)
-    if model_type == "SHRED":
-        model = models.SHRED(num_sensors, len(lats), seq_model=sequence_model, hidden_size=hidden_dim,
+
+    if "SHRED" in model_type:
+        model = models.SHRED(num_sensors, len(lats), seq_model=model_type.split("-")[-1], hidden_size=hidden_dim,
                             hidden_layers=2, l1=350, l2=400, dropout=0.1).to(device)
     elif model_type == "SDN":
         model = models.SDN(num_sensors, len(lats), l1=350, l2=400, dropout=0.1).to(device)
@@ -268,9 +253,6 @@ def pod_reconstructions(data_transformed, dates, lags, num_sensors, save_path, s
     C = np.zeros((num_sensors, len(lats)))
     for i in range(num_sensors):
         C[i, sensor_locations[i]] = 1
-
-    for row in C:
-        print(row)
 
     A = C @ U_r
 
@@ -345,7 +327,7 @@ if __name__ == "__main__":
     # Required (standard)
     parser.add_argument("version", help="Version indicator (str) for saving, e.g. the date in format 051026")
     parser.add_argument("dataset", help="Dataset type to use", choices=["OFAM3", "NOAA"])
-    parser.add_argument("models", help="List of model types to train; choices are SHRED,SDN,POD,RBFI. Format as comma separated string (with no spaces)", type=list_of_strings)
+    parser.add_argument("models", help="List of model types to train; choices are SHRED-LSTM,SHRED-GRU,SDN,POD,RBFI. Format as comma separated string (with no spaces)", type=list_of_strings)
     parser.add_argument("num_sensors", help="Number of synthetic sensors to use, integer", type=int)
 
     # Optional - Bool flags
@@ -357,7 +339,6 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--filepath", help="File path to save results under",
                         default="Reconstructions/Static/")
     parser.add_argument("-d", "--hidden_dim", help="Hidden dimension for sequence model", type=int, default=128)
-    parser.add_argument("-s", "--sequence_model", help="Sequence model to use", default="LSTM", choices=["LSTM", "GRU"])
     parser.add_argument("-l", "--lags", help="Lags (sequence length in weeks)", default=52, type=int)
     parser.add_argument("-r", "--area", help="Area of ocean to use", default="NA", choices=["world", "NA", "GS"])
     parser.add_argument("-p", "--sensor_placement", help="Type of sensor placement to use; choices are random or QR", choices=["random", "QR"], default="random")
@@ -381,11 +362,7 @@ if __name__ == "__main__":
 
     for model_type in args.models:
         # Storage
-        if model_type == "SHRED":
-            model_name = f"{model_type}-{args.sequence_model}"
-        elif model_type == "SDN":
-            model_name = model_type
-        model_path = path + f"/{model_name}" 
+        model_path = f"{path}/{model_type}" 
 
         # Make experiment folder
         model_directory = os.path.join(args.filepath, model_path)
@@ -393,11 +370,11 @@ if __name__ == "__main__":
         os.makedirs(model_directory, exist_ok = True)
 
         # Build sequences
-        if model_type in ["SHRED", "SDN"]:
+        if model_type in ["SHRED-LSTM", "SHRED-GRU", "SDN"]:
             datasets = build_sequences(model_type, pp_data, dates_dict, args.lags, model_directory, sensor_locations)
             # Train, val and test models
             train_shred_sdn(datasets=datasets, hidden_dim=args.hidden_dim, model_type=model_type, norm_model=norm_model,
-                           num_sensors=args.num_sensors, save_path=(directory, model_directory), sequence_model=args.sequence_model)
+                           num_sensors=args.num_sensors, save_path=(directory, model_directory))
         elif model_type == "POD":
             pod_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
                                 num_sensors=args.num_sensors, save_path=(directory, model_directory),
