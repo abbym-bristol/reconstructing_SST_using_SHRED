@@ -16,7 +16,7 @@ import netCDF4 as nc
 import pandas as pd
 from tqdm import tqdm
 
-from Data.load_sst_en411_data import crop_df_to_area
+from Data.load_sst_en411_data import crop_df_to_area  # type: ignore
 
 FILE_PATH = "Data/OFAM3/temp_ofam3_7d_197901-201412.0p25x0p25.nc"
 NA_DATA_PATH = "Data/OFAM3/NA/"
@@ -109,4 +109,4 @@ if __name__ == "__main__":
 
     # Preprocess data
     print("Preprocessing data...")
-    # process_sst_data(temps, dates, lats, longs)
+    process_sst_data(temps, dates, lats, longs)
