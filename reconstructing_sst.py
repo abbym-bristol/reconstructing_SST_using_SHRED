@@ -30,14 +30,14 @@ from sklearn.preprocessing import MinMaxScaler
 
 # Local imports
 from helper_functions import models, noaa_data, ofam3_data
-from helper_functions.pod import create_pod_test_data, qr_place, svd_basis
-from helper_functions.preprocess_SDN import create_sdn_datasets
-from helper_functions.preprocess_SHRED import (
+from helper_functions.pod import qr_place, svd_basis
+from helper_functions.preprocess_data import (
+    TimeSeriesDataset,
     convert_to_anomaly,
-    create_shred_sequences,
     split_ordered_data,
 )
-from helper_functions.saving import JsonEncoder, recons_truth_save
+from helper_functions.saving import JsonEncoder
+from helper_functions.windows import build_windows
 
 np.random.seed(42)
 random.seed(42)
@@ -97,160 +97,115 @@ def preprocess_data(anomaly, data, dates, num_sensors, save_path, sensor_placeme
     print("Preprocessing data...")
     train_data, val_data, test_data, train_dates, val_dates, test_dates = split_ordered_data(data, dates, all_dates=True)
     dates_dict = {"train": train_dates, "val": val_dates, "test": test_dates}
+    bulk_mean = None
     if anomaly:
         train_data, val_data, test_data, bulk_mean = convert_to_anomaly((train_data, val_data, test_data))
 
-    # Normalise data
+    # Normalise data. 
+    # Cast to float32 here so every model (torch or numpy) sees
+    # bit-identical inputs and targets - torch models need float32 anyway.
     sc = MinMaxScaler()
     sc = sc.fit(train_data)  # Computes min and max from training data only (prevent data leakage)
     data_dict = {
-        "train": sc.transform(train_data),
-        "val": sc.transform(val_data),
-        "test": sc.transform(test_data)
+        "train": sc.transform(train_data).astype(np.float32),
+        "val": sc.transform(val_data).astype(np.float32),
+        "test": sc.transform(test_data).astype(np.float32),
     }
 
     # Sensor placement
     if sensor_placement == "random":
-        # Set sensor locations
         sensor_locations = np.random.choice(data.shape[1], size=num_sensors, replace=False)
-        # Set POD basis
-        U_r = svd_basis(train_data, num_sensors)
-
+        U_r = svd_basis(train_data, num_sensors)  # Set POD basis
     elif sensor_placement == "QR":
         sensor_locations, U_r = qr_place(train_data, num_sensors)
-
     else:
         raise ValueError("Incorrect placement of sensors specified")
 
     sensor_coords=(longs[sensor_locations], lats[sensor_locations])
     print(f"Sensor location indexes will be: {sensor_locations}")
 
-    # Save metadata
-    metadata = {
-        "sensor_locations": list(sensor_locations),
-        "sensor_coords": list(sensor_coords),
-        "dates": dates_dict
-    }
-    if anomaly:
-        metadata["bulk_mean"] = bulk_mean
-    with open(f"{save_path}/metadata.json", 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, cls=JsonEncoder)
-
     return data_dict, dates_dict, sc, sensor_locations, U_r
 
 
-def build_sequences(model_type, data_transformed, dates, lags, save_path, sensor_locations):
-    """Build sequences for each model type
+#-------------------- MODELS --------------------#
+# All models receive the same windows (from build_windows) and return NORMALISED test
+# reconstructions of shape (N, m), in the same row order as windows["test"]["truth"].
+# Un-normalising and saving happen once, in main.
 
+def to_torch_dataset(split_windows, input_key, device):
+    """Wrap a view of the shared windows as a torch dataset (no re-indexing happens here)
+    
     Args:
-        model_type (str): type of model to train; choices are one of: SHRED, SDN, POD, RBFI
-        data_transformed (dict): transformed datasets, stored as {train, val, test}
-        dates (dict): corresponding dates, stored as {train, val, test}
-        lags (int): sequence length in weeks
-        save_path (str): file path to save results under
-        sensor_locations (list): sensor locations corresponding to indices in the full-field data
+        TBC
+    
+    Returns:
+        (TimeSeriesDataset): Torch dataset of timeseries data
+    """
+    X = torch.from_numpy(split_windows[input_key]).to(device)
+    Y = torch.from_numpy(split_windows["truth"]).to(device)
+    return TimeSeriesDataset(X, Y)
+
+
+def shred_sdn_reconstructions(windows, hidden_dim, model_type, num_sensors, num_points):
+    """Train and validate a SHRED or SDN model on the shared windows, then reconstruct the test split
+ 
+    SHRED uses the sensor history (sensor_seqs); SDN uses only the final step (sensor_now).
+    Both are trained, validated and tested on exactly the same target weeks.
+ 
+    Args:
+        windows (dict): {train, val, test} windows from build_windows
+        hidden_dim (int): hidden dimension for the sequence model
+        model_type (str): SHRED-LSTM, SHRED-GRU or SDN
+        num_sensors (int): number of synthetic sensors
+        num_points (int): size of the full field (m)
  
     Returns:
-        datasets (dict): dictionary containing the sequenced datasets (train, val and test)
-    
-    Saves a metadata file for the model, containing:
-        lag_dates (dict): dictionary containing dates that correspond with the train, val and test data in datasets
-    """
-    # Build sequences
-    if "SHRED" in model_type:
-        train_dataset = create_shred_sequences(data_transformed["train"], sensor_locations, lags=lags)
-        val_dataset = create_shred_sequences(data_transformed["val"], sensor_locations, lags=lags)
-        test_dataset = create_shred_sequences(data_transformed["test"], sensor_locations, lags=lags)
-
-        # Get dates corresponding to the predictions made by the model
-        train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
-        val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
-        test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
-
-    elif model_type == "SDN":
-        # TODO - verify type of SDN sequences, how much data etc, write comment explaining exactly how the sequences match
-        train_dataset = create_sdn_datasets(data_transformed["train"], sensor_locations, test_lags=lags)
-        val_dataset = create_sdn_datasets(data_transformed["val"], sensor_locations, test_lags=lags)
-        # Generate test set to match SHRED test set
-        # (use final sensor results for what each sequence would be if using SHRED)
-        test_dataset = create_sdn_datasets(data_transformed["test"], sensor_locations, test_lags=lags)
-
-    datasets = {"train": train_dataset, "val": val_dataset, "test": test_dataset}
-
-    train_lag_dates = dates["train"][np.array(range(len(dates["train"])-lags)) + lags - 1]
-    val_lag_dates = dates["val"][np.array(range(len(dates["val"])-lags)) + lags - 1]
-    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
-    lag_dates = {"train": train_lag_dates, "val": val_lag_dates, "test": test_lag_dates}
-
-    # Save metadata
-    metadata = {
-        "lag_dates": lag_dates
-    }
-    with open(f"{save_path}/metadata.json", 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, cls=JsonEncoder)
-
-    return datasets
-
-
-def train_shred_sdn(datasets, hidden_dim, model_type, norm_model, num_sensors, save_path):
-    """Train, validate and test SHRED or SDN models
-    
-    Args:
-        datasets (dict): dictionary containing the sequenced datasets (train, val and test)
-        hidden_dim (int): hidden dimension for the sequence model
-        model_type (str): model type to train; one of SHRED, SDN, POD, RBFI
-        norm_model (class): MinMaxScaler() class fitted on the training data
-        num_sensors (int): number of synthetic sensors to use
-        save_path (tuple): file paths to save results under (experiment directory, model directory)
-
-    Returns:
-        None
-
-    Saves out the reconstructions produced by the model (and the corresponding ground truth)
+        test_recons (numpy array): normalised reconstructions, shape (N, m)
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # TODO - add mutliple training and saving (interun variability)
 
     if "SHRED" in model_type:
-        model = models.SHRED(num_sensors, len(lats), seq_model=model_type.split("-")[-1], hidden_size=hidden_dim,
+        input_key = "sensor_seqs"
+        model = models.SHRED(num_sensors, num_points, seq_model=model_type.split("-")[-1], hidden_size=hidden_dim,
                             hidden_layers=2, l1=350, l2=400, dropout=0.1).to(device)
     elif model_type == "SDN":
-        model = models.SDN(num_sensors, len(lats), l1=350, l2=400, dropout=0.1).to(device)
+        input_key = "sensor_now"
+        model = models.SDN(num_sensors, num_points, l1=350, l2=400, dropout=0.1).to(device)
+    else:
+        raise ValueError(f"Not a SHRED/SDN model type: {model_type}")
 
-    validation_errors = models.fit(model, datasets["train"], datasets["val"], batch_size=64, num_epochs=1000, lr=1e-3, verbose=True, patience=5)
+    # Set up dataset
+    train_ds = to_torch_dataset(windows["train"], input_key, device)
+    val_ds = to_torch_dataset(windows["val"], input_key, device)
+
+    # Train and validate model
+    validation_errors = models.fit(model, train_ds, val_ds, batch_size=64, num_epochs=1000, lr=1e-3, verbose=True, patience=5)
     print('Validation Reconstruction Error: ', validation_errors)
 
     # Test
-    test_recons = norm_model.inverse_transform(model(datasets["test"].X).detach().cpu().numpy())
-    test_ground_truth = norm_model.inverse_transform(datasets["test"].Y.detach().cpu().numpy())
-    print('Test Reconstruction Error: ')
-    print(np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth))
+    model.eval()  # make sure dropout is off for testing
+    with torch.no_grad():
+        X_test = torch.from_numpy(windows["test"][input_key]).to(device)
+        test_recons = model(X_test).cpu().numpy()
 
-    recons_truth_save(save_path, test_recons, test_ground_truth)
+    return test_recons
 
 
-def pod_reconstructions(data_transformed, dates, lags, norm_model, num_sensors, save_path, sensor_locations, sensor_placement, U_r):
-    """TBC
+def pod_reconstructions(test_windows, num_points, num_sensors, sensor_locations, sensor_placement, U_r):
+    """Gappy POD reconstruction of the test windows (POD basis comes from the full training data)
 
     Args:
-        data_transformed (dict): transformed datasets, stored as {train, val, test}
-        dates (dict): corresponding dates, stored as {train, val, test}
-        lags (int): sequence length in weeks
-        norm_model (class): MinMaxScaler() class fitted on the training data
+        test_windows (dict): test windows from build_windows
+        num_points (int): size of the full field (m)
         num_sensors (int): number of synthetic sensors to use
-        save_path (tuple): file paths to save results under (experiment directory, model directory)
         sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
         sensor_placement (str): type of sensor placement to use; choices are random or QR
         U_r (numpy array): POD basis of the first num_sensors POD modes
 
     Returns:
-        Saves out the reconstructions produced by the model (and the corresponding ground truth)
-        Saves a metadata file for the model, containing
-            test_lag_dates (numpy array): lag dates that correspond with the sequenced test data used
+        test_recons (numpy array): normalised reconstructions, shape (N, m)
     """
-    test_input, test_ground_truth = create_pod_test_data(data_transformed["test"], sensor_locations, test_lags=lags)
-    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
-
     C = np.zeros((num_sensors, len(lats)))
     for i in range(num_sensors):
         C[i, sensor_locations[i]] = 1
@@ -262,28 +217,19 @@ def pod_reconstructions(data_transformed, dates, lags, norm_model, num_sensors, 
         print(f"Warning: C @ U_r is ill-conditioned (cond={cond:.2e}) "
             f"for placement='{sensor_placement}'.")
 
-    coeffs, *_ = np.linalg.lstsq(A, test_input.T, rcond=None)
+    coeffs, *_ = np.linalg.lstsq(A, test_windows["sensor_now"].T, rcond=None)
     test_recons = (U_r @ coeffs).T
-
-    # Saving
-    recons_truth_save(save_path, norm_model.inverse_transform(test_recons), norm_model.inverse_transform(test_ground_truth))
-    # Save metadata
-    metadata = {
-        "test_lag_dates": test_lag_dates
-    }
-    with open(f"{save_path[1]}/metadata.json", 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, cls=JsonEncoder)
+    
+    return test_recons
 
 
-def rbfi_reconstructions(data_transformed, dates, lags, norm_model, save_path, sensor_coords):
-    """TBC
+def rbfi_reconstructions(test_windows, lats, longs, sensor_coords):
+    """RBF interpolation reconstruction of the test windows
 
     Args:
-        data_transformed (dict): transformed datasets, stored as {train, val, test}
-        dates (dict): corresponding dates, stored as {train, val, test}
-        lags (int): sequence length in weeks
-        norm_model (class): MinMaxScaler() class fitted on the training data
-        save_path (tuple): file paths to save results under (experiment directory, model directory)
+        test_windows (dict): test windows from build_windows
+        lats (numpy array): array of latitudes corresponding to SST values
+        longs (numpy array): array of longitudes corresponding to SST values
         sensor_coords (numpy array): Latitude and Longitude coordinates corresponding to sensor_locations
 
     Returns:
@@ -291,29 +237,21 @@ def rbfi_reconstructions(data_transformed, dates, lags, norm_model, save_path, s
         Saves a metadata file for the model, containing
             test_lag_dates (numpy array): lag dates that correspond with the sequenced test data used
     """
-    test_input, test_ground_truth = create_pod_test_data(data_transformed["test"], sensor_locations, test_lags=lags)
-    test_lag_dates = dates["test"][np.array(range(len(dates["test"])-lags)) + lags - 1]
-
     points = np.array([[sensor_coords[0][i], sensor_coords[1][i]] for i in range(len(sensor_coords[0]))])
     full_coords = np.column_stack([longs, lats])
 
+    test_input = test_windows["sensor_now"]
     rbf_recons = np.zeros((len(test_input), len(lats)))
     for j, data in enumerate(test_input):
         interpolator = RBFInterpolator(
             points,
             data,
             kernel='thin_plate_spline',
-            smoothing=0.0,      # raise this (e.g. 1e-2–1e0) if sensors are noisy
+            smoothing=0.0, # raise this (e.g. 1e-2–1e0) if sensors are noisy
         )
         rbf_recons[j] = interpolator(full_coords)
 
-    recons_truth_save(save_path, norm_model.inverse_transform(rbf_recons), norm_model.inverse_transform(test_ground_truth))
-    # Save metadata
-    metadata = {
-        "test_lag_dates": test_lag_dates
-    }
-    with open(f"{save_path[1]}/metadata.json", 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, cls=JsonEncoder)
+    return rbf_recons
 
 
 # Define a custom argument type for a list of strings
@@ -332,8 +270,6 @@ if __name__ == "__main__":
 
     # Optional - Bool flags
     parser.add_argument("-a", "--anomaly", action="store_true", help="Use anomalies to train if this flag is used")
-    # parser.add_argument("-e", "--eval", action="store_true", help="Evaluate reconstructions if this flag is used")
-    # parser.add_argument("-t", "--train", action="store_true", help="Train models if this flag is used")
 
     # Optional - defaults set
     parser.add_argument("-f", "--filepath", help="File path to save results under",
@@ -345,10 +281,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Train models
-    # if args.train:
-        # print("Mode: Train models")
-    
+    # ---------- Shared set up (identical for every model) ----------
+
     # Load and reformat data
     path = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
     directory = os.path.join(args.filepath, path)
@@ -356,33 +290,55 @@ if __name__ == "__main__":
     os.makedirs(directory, exist_ok=True)
 
     data, lats, longs, dates = load_dataset(args.area, args.dataset)
-    pp_data, dates_dict, norm_model, sensor_locations, U_r = preprocess_data(anomaly=args.anomaly, data=data, dates=dates,
-                                                                        num_sensors=args.num_sensors, save_path=directory,
-                                                                        sensor_placement=args.sensor_placement)
+    pp_data, dates_dict, norm_model, sensor_locations, sensor_coords, U_r, bulk_mean = preprocess_data(
+        anomaly=args.anomaly, data=data, dates=dates, lats=lats, longs=longs,
+        num_sensors=args.num_sensors, sensor_placement=args.sensor_placement)
 
+     # One set of windows for every split; every model takes a view of these
+    windows = {split: build_windows(pp_data[split], dates_dict[split], sensor_locations, args.lags)
+               for split in ("train", "val", "test")}
+ 
+    # Ground truth is computed and saved once, so it cannot differ between models
+    test_ground_truth = norm_model.inverse_transform(windows["test"]["truth"])
+    np.save(f"{directory}/truth", test_ground_truth)
+ 
+    metadata = {
+        "sensor_locations": list(sensor_locations),
+        "sensor_coords": list(sensor_coords),
+        "dates": dates_dict,
+        "test_lag_dates": windows["test"]["dates"],
+    }
+    if bulk_mean is not None:
+        metadata["bulk_mean"] = bulk_mean
+    with open(f"{directory}/metadata.json", 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, cls=JsonEncoder)
+ 
+    num_points = len(lats)
+
+    # ---------- Model reconstructions ----------
     for model_type in args.models:
         # Storage
-        model_path = f"{path}/{model_type}" 
-
-        # Make experiment folder
-        model_directory = os.path.join(args.filepath, model_path)
+        model_directory = os.path.join(directory, model_type)
         print("Saving results under: ", model_directory)
-        os.makedirs(model_directory, exist_ok = True)
+        os.makedirs(model_directory, exist_ok=True)
 
         # Build sequences
         if model_type in ["SHRED-LSTM", "SHRED-GRU", "SDN"]:
-            datasets = build_sequences(model_type, pp_data, dates_dict, args.lags, model_directory, sensor_locations)
-            # Train, val and test models
-            train_shred_sdn(datasets=datasets, hidden_dim=args.hidden_dim, model_type=model_type, norm_model=norm_model,
-                           num_sensors=args.num_sensors, save_path=(directory, model_directory))
+            recons_norm = shred_sdn_reconstructions(windows, hidden_dim=args.hidden_dim, model_type=model_type,
+                                                    num_sensors=args.num_sensors, num_points=num_points)
         elif model_type == "POD":
-            pod_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags,
-                                num_sensors=args.num_sensors, norm_model=norm_model, save_path=(directory, model_directory),
-                                sensor_locations=sensor_locations, sensor_placement=args.sensor_placement, U_r=U_r)
+            recons_norm = pod_reconstructions(windows["test"], num_points=num_points, num_sensors=args.num_sensors,
+                                              sensor_locations=sensor_locations, sensor_placement=args.sensor_placement, U_r=U_r)
         elif model_type == "RBFI":
-            rbfi_reconstructions(data_transformed=pp_data, dates=dates_dict, lags=args.lags, 
-                                 norm_model=norm_model, save_path=(directory, model_directory),
-                                 sensor_locations=sensor_locations)
+            recons_norm = rbfi_reconstructions(windows["test"], lats=lats, longs=longs, sensor_coords=sensor_coords)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+
+        test_recons = norm_model.inverse_transform(recons_norm)
+        np.save(f"{model_directory}/recons", test_recons)
+ 
+        rel_err = np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth)
+        print(f"{model_type} test relative reconstruction error: {rel_err:.4f}")
 
 """
 References:

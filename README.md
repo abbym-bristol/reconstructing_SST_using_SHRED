@@ -8,7 +8,7 @@ Within a virtual environment created for the project:
 pip install -r requirements.txt
 
 If that doesn't work, the environment can be set up using:
-- `pip install matplotlib numpy pandas torch scikit-learn tqdm`
+- `pip install matplotlib numpy pandas torch scikit-learn tqdm pytest`
 
 # Data
 Datasets used:

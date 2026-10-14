@@ -54,24 +54,3 @@ def all_equal(iterator):
      return all(np.array_equal(first, rest) for rest in iterator)
   except StopIteration:
      return True
-
-
-def recons_truth_save(save_path, test_recons, test_ground_truth):
-    """Save reconstructions and ground truth data
-    
-    Args:
-        save_path (tuple): file paths to save results under (experiment directory, model directory)
-        test_recons (TBC): 
-        test_ground_truth (TBC):
-    Returns:
-        None
-    """
-    np.save(f"{save_path[1]}/recons", test_recons)  # save for the model
-    if not os.path.isfile(f"{save_path[0]}/truth.npy"):
-        np.save(f"{save_path[0]}/truth", test_ground_truth)  # save once for the experiment
-    else:
-        saved_truth = np.load(f"{save_path[0]}/truth.npy")
-        print(saved_truth)
-        print(test_ground_truth)
-        if not np.array_equal(saved_truth, test_ground_truth):  # check truth was the same for this model
-            raise ValueError("Ground truth has changed compared to existing saved file")

@@ -6,34 +6,6 @@ import numpy as np
 import scipy
 
 
-def create_pod_test_data(data, sensor_locs, test_lags=None):
-    """Create test data for POD reconstructions
-
-    Args:
-        data (numpy array): 2D array of data to split of format [[values for time 1], [values for time 2], ...]
-        sensor_locs (numpy array): indexes corresponding to the shape of the values for
-            time t in data that indicate the sensor locations to use for the model
-        test_lags (int, optional): if matching a comparison to SHRED, this will be the number of weeks 
-            in each SHRED sequence. Defaults to None.
-
-    Returns:
-        data_in (numpy array): data values at sensor_locs
-        ground_truth (numpy array):  full-field ground truth
-    """
-    if test_lags is None:
-        # Not matching test dataset to SHRED test dataset
-        data_in = np.array([data[i, sensor_locs] for i in range(len(data))])
-        ground_truth = data
-
-    else:
-        # Want only to test on the end point for each lag so can directly compare SDN and SHRED performance
-        data_in = np.array([data[i + test_lags - 1, sensor_locs] for i in range(len(data) - test_lags)])
-        ### -1 to have output be at the same time as final sensor measurements
-        ground_truth = data[np.array(range(len(data)-test_lags)) + test_lags - 1]
-
-    return data_in, ground_truth
-
-
 def svd_basis(data_matrix, num_sensors):
     """Compute POD basis, without QR
 
