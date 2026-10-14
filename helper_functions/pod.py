@@ -27,7 +27,7 @@ def create_pod_test_data(data, sensor_locs, test_lags=None):
 
     else:
         # Want only to test on the end point for each lag so can directly compare SDN and SHRED performance
-        data_in = np.array([data[i+test_lags, sensor_locs] for i in range(len(data)-test_lags)])
+        data_in = np.array([data[i + test_lags - 1, sensor_locs] for i in range(len(data) - test_lags)])
         ### -1 to have output be at the same time as final sensor measurements
         ground_truth = data[np.array(range(len(data)-test_lags)) + test_lags - 1]
 

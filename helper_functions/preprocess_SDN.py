@@ -49,7 +49,7 @@ def create_sdn_datasets(data, sensor_locs, test_lags=None):
 
     else:
         # Want only to test on the end point for each lag so can directly compare SDN and SHRED performance
-        data_in = np.array([data[i+test_lags, sensor_locs] for i in range(len(data)-test_lags)])
+        data_in = np.array([data[i + test_lags - 1, sensor_locs] for i in range(len(data) - test_lags)])
         data_in = torch.tensor(data_in, dtype=torch.float32).to(device)
         ### -1 to have output be at the same time as final sensor measurements
         data_out = torch.tensor(data[np.array(range(len(data)-test_lags)) + test_lags - 1], dtype=torch.float32).to(device)

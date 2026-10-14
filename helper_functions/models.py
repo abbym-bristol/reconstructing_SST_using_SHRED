@@ -101,8 +101,6 @@ def fit(model, train_dataset, valid_dataset, batch_size=64, num_epochs=4000, lr=
         for k, data in enumerate(train_loader):
             model.train()
             outputs = model(data[0])
-            print(outputs.shape)
-            print(len(data[1]))
             optimizer.zero_grad()
             loss = criterion(outputs, data[1])
             loss.backward()
