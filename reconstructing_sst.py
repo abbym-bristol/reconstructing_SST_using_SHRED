@@ -41,6 +41,7 @@ from helper_functions.windows import build_windows
 
 np.random.seed(42)
 random.seed(42)
+torch.manual_seed(42)
 
 #-------------------- SET UP --------------------#
 
@@ -71,28 +72,25 @@ def load_dataset(area, dataset):
     return data, lats, longs, dates
 
 
-def preprocess_data(anomaly, data, dates, num_sensors, save_path, sensor_placement):
-    """Preprocess data with varying numbers of static sensors placed randomly
-
+def preprocess_data(anomaly, data, dates, lats, longs, num_sensors, sensor_placement):
+    """Preprocess data with varying numbers of static sensors
+ 
     Args:
         anomaly (Bool): whether or not to use anomalies
         data (numpy array): SST data
         dates (numpy array): array of dates corresponding to SST values
+        lats, longs (numpy array): coordinates of each grid point in data
         num_sensors (int): number of synthetic sensors to use
-        save_path (str): file path to save results under
         sensor_placement (str): type of sensor placement to use; choices are random or QR
-
+ 
     Returns:
-        data_dict (dict): dictionary contianing train, val and test data (after preprocessing, but before sequencing)
-        dates_dict (dict): dictionary containing dates that correspond with the train, val and test data in data_dict
+        data_dict (dict): normalised float32 train, val and test data (before sequencing)
+        dates_dict (dict): dates that correspond with the train, val and test data in data_dict
         sc (class): MinMaxScaler() class fitted on the training data
         sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
+        sensor_coords (tuple): (longs, lats) of each sensor
         U_r (numpy array): POD basis of the first num_sensors POD modes
-    
-    Saves a metadata file for the experiment version, containing:
-        sensor_locations (see Returns)
-        sensor_coords (numpy array): Latitude and Longitude coordinates corresponding to sensor_locations
-        dates_dict (see Returns)
+        bulk_mean (numpy array or None): training mean if anomaly is True
     """
     print("Preprocessing data...")
     train_data, val_data, test_data, train_dates, val_dates, test_dates = split_ordered_data(data, dates, all_dates=True)
@@ -124,7 +122,7 @@ def preprocess_data(anomaly, data, dates, num_sensors, save_path, sensor_placeme
     sensor_coords=(longs[sensor_locations], lats[sensor_locations])
     print(f"Sensor location indexes will be: {sensor_locations}")
 
-    return data_dict, dates_dict, sc, sensor_locations, U_r
+    return data_dict, dates_dict, sc, sensor_locations, sensor_coords, U_r, bulk_mean
 
 
 #-------------------- MODELS --------------------#
@@ -192,12 +190,11 @@ def shred_sdn_reconstructions(windows, hidden_dim, model_type, num_sensors, num_
     return test_recons
 
 
-def pod_reconstructions(test_windows, num_points, num_sensors, sensor_locations, sensor_placement, U_r):
+def pod_reconstructions(test_windows, num_sensors, sensor_locations, sensor_placement, U_r):
     """Gappy POD reconstruction of the test windows (POD basis comes from the full training data)
 
     Args:
         test_windows (dict): test windows from build_windows
-        num_points (int): size of the full field (m)
         num_sensors (int): number of synthetic sensors to use
         sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
         sensor_placement (str): type of sensor placement to use; choices are random or QR

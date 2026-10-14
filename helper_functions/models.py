@@ -127,7 +127,7 @@ def fit(model, train_dataset, valid_dataset, batch_size=64, num_epochs=4000, lr=
 
             if patience_counter == patience:
                 model.load_state_dict(best_params)
-                return torch.tensor(val_error_list).cpu()
+                return torch.tensor(val_error_list).detach().cpu().numpy()
 
     model.load_state_dict(best_params)
     return torch.tensor(val_error_list).detach().cpu().numpy()
