@@ -158,6 +158,8 @@ def mask_array_by_lat_long(array, lats, longs, area="GS"):
     elif area == "NA":
         min_lat, max_lat = 0.0, 60.0
         min_long, max_long = -80.0, 0.0
+    else:
+        ValueError("Area specified is not currently configured.")
 
     valid_mask = (
         (lats >= min_lat) & (lats <= max_lat) &
