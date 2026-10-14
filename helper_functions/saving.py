@@ -29,10 +29,13 @@ def unpack_metadata(metadata_file):
         metadata_file (str): file path to metadata
 
     Returns:
-        sensor_locations (numpy array): indexes corresponding to the sensor locations in the full lat/long grid array
-        sensor_coords (tuple): tuple of arrays (longs[sensor_locations], lats[sensor_locations])
-            i.e. longitudes and latitudes at the sensor locations used for the reconstruction.
-        test_lag_dates (numpy arrays) dates corresponding to the predictions made by the model
+        metadata (dict): dictionary containing the following keys:
+            "sensor_locations" (numpy array): indexes corresponding to the sensor locations in the full lat/long grid array
+            "sensor_coords" (tuple): tuple of arrays (longs[sensor_locations], lats[sensor_locations])
+                i.e. longitudes and latitudes at the sensor locations used for the reconstruction.
+            "dates" (dict): dates that correspond with the train, val and test data in data_dict
+            "test_lag_dates" (numpy arrays) dates corresponding to the predictions made by the model
+            "bulk_mean" (numpy array, may not be present): training mean if anomalies used
     """
     with open(metadata_file, 'r', encoding='utf-8') as f:
         metadata = json.load(f)
@@ -43,7 +46,7 @@ def unpack_metadata(metadata_file):
         else:
             metadata[k] = np.array(v)
 
-    return tuple(metadata.values())
+    return metadata
 
 
 def all_equal(iterator):
