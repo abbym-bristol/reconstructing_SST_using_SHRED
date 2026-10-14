@@ -4,7 +4,7 @@
 
 target-version = "py314"
 # line-length = 120
-indent-width = 2
+indent-width = 4
 extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml"]
 
 [format]
