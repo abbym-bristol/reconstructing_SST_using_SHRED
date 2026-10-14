@@ -95,30 +95,3 @@ def convert_to_anomaly(data):
     test_anomaly = test - train_bulk_mean
 
     return train_anomaly, val_anomaly, test_anomaly, train_bulk_mean
-
-
-def create_shred_sequences(data, sensor_locs, lags=LAGS):
-    """Create sequences for input to the SHRED model
-
-    Args:
-        data (2D numpy array): 2D array of data to split of format [[values for time 1], [values for time 2], ...]
-        sensor_locs (numpy array): indexes corresponding to the shape of the values for time t in data that indicate the sensor locations to use for the model
-        lags (int, optional): number of weeks in each sequence, defaults to LAGS (52)
-
-    Returns:
-        dataset (TimeSeriesDataset): torch tensor dataset of input sequences and labels (entire data field at the end of each sequence)
-    """
-    num_sensors = len(sensor_locs)
-    data_in = np.zeros((len(data) - lags, lags, num_sensors))
-    for i in range(len(data_in)):
-        data_in[i] = data[i:i+lags, sensor_locs]  # stores values between i and 52 weeks, at 3 sensor locations
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    data_in = torch.tensor(data_in, dtype=torch.float32).to(device)
-
-    # +lags-1 to have output be at the same time as final sensor measurements
-    data_out = torch.tensor(data[np.array(range(len(data)-lags)) + lags - 1], dtype=torch.float32).to(device)
-
-    dataset = TimeSeriesDataset(data_in, data_out)
-
-    return dataset

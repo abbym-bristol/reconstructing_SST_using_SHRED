@@ -67,6 +67,8 @@ def crop_df_to_area(df, area, sort_by):
     elif area == "NA":
         min_lat, max_lat = 0.0, 60.0
         min_long, max_long = -80.0, 0.0
+    else:
+        ValueError("Area specified is not currently configured.")
 
     df_mask = ((df['Longitude'] >= min_long) & (df['Longitude'] <= max_long) &
                (df['Latitude'] >= min_lat) & (df['Latitude'] <= max_lat))

@@ -23,6 +23,8 @@ class SHRED(torch.nn.Module):
         elif seq_model == "GRU":
             self.sequence = torch.nn.GRU(input_size=input_size, hidden_size=hidden_size,
                 num_layers=hidden_layers, batch_first=True)
+        else:
+            raise ValueError(f"Unknown seq_model '{seq_model}'; expected 'LSTM' or 'GRU'")
         
         self.linear1 = torch.nn.Linear(hidden_size, l1)
         self.linear2 = torch.nn.Linear(l1, l2)
@@ -127,7 +129,7 @@ def fit(model, train_dataset, valid_dataset, batch_size=64, num_epochs=4000, lr=
 
             if patience_counter == patience:
                 model.load_state_dict(best_params)
-                return torch.tensor(val_error_list).cpu()
+                return torch.tensor(val_error_list).detach().cpu().numpy()
 
     model.load_state_dict(best_params)
     return torch.tensor(val_error_list).detach().cpu().numpy()

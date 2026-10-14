@@ -81,7 +81,7 @@ def crop_to_area(temps, lats, longs, area="NA"):
         min_lat, max_lat = 0.0, 60.0
         min_long, max_long = -80.0, 0.0
     else:
-        raise ValueError('Incorrect area passed')
+        ValueError("Area specified is not currently configured.")
 
     # Create boolean mask for valid region
     mask = ((longs >= min_long) & (longs <= max_long) &
