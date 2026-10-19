@@ -42,8 +42,8 @@ def grid_square_coords(lat, long, extent=0.25):
     return coords
 
 
-def area_weighted_mean(data, lats, longs):
-    """Average of data, weighted by area of each grid square on the globe
+def grid_square_areas(lats, longs):
+    """Calculate area of each grid square on the globe
 
     Notes: https://pyproj4.github.io/pyproj/stable/api/geod.html
     - only works with areas up to half the size of the globe ;
@@ -51,23 +51,39 @@ def area_weighted_mean(data, lats, longs):
     - lats should be in the range [-90 deg, 90 deg]
 
     Args:
-        data (array): data of shape (timesteps, len(lats)) which stores a particular value
-            (e.g. SST or OHC) for each grid square of the ME4OH full-field OFAM3 dataset
         lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
         longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
 
-    Return:
-        mean (array): weighted average of data, weighted by the area of each grid square using its latitude and longitude coordinates
+    Returns:
+        areas (numpy array): area of each grid cell in m^2, shape (n_cells,)
     """
+    resolution = infer_resolution(lats)
     areas = []
     for lat, long in zip(lats, longs):
-        coords = grid_square_coords(lat, long, extent=infer_resolution(lats))
+        coords = grid_square_coords(lat, long, extent=resolution)
         poly = Polygon(coords)
         geod = Geod(ellps="WGS84")
         area_m2, _ = geod.geometry_area_perimeter(poly)
         areas.append(area_m2)
     
     areas = np.array(areas)
+
+    return areas
+
+
+def area_weighted_mean(data, lats, longs):
+    """Average of data, weighted by area of each grid square on the globe
+
+    Args:
+        data (array): data of shape (timesteps, len(lats)) which stores a particular value
+            (e.g. SST or OHC) for each grid square of the ME4OH full-field OFAM3 dataset
+        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
+        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
+
+    Returns:
+        mean (numpy array): weighted average of data, weighted by the area of each grid square using its latitude and longitude coordinates
+    """
+    areas = grid_square_areas(lats, longs)
     mean = [np.sum(d * areas)/np.sum(areas) for d in data]
 
-    return mean, areas
+    return mean
