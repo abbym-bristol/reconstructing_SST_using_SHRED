@@ -333,8 +333,8 @@ if __name__ == "__main__":
             recons_norm = shred_sdn_reconstructions(windows, hidden_dim=args.hidden_dim, model_type=model_type,
                                                     num_sensors=args.num_sensors, num_points=num_points)
         elif model_type == "POD":
-            recons_norm = pod_reconstructions(windows["test"], num_points=num_points, num_sensors=args.num_sensors,
-                                              sensor_locations=sensor_locations, sensor_placement=args.sensor_placement, U_r=U_r)
+            recons_norm = pod_reconstructions(windows["test"], num_sensors=args.num_sensors, sensor_locations=sensor_locations,
+                                              sensor_placement=args.sensor_placement, U_r=U_r)
         elif model_type == "RBFI":
             recons_norm = rbfi_reconstructions(windows["test"], lats=lats, longs=longs, sensor_coords=sensor_coords)
         else:
