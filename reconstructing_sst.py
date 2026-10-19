@@ -26,7 +26,7 @@ import random
 import numpy as np
 import torch
 from scipy.interpolate import RBFInterpolator
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 
 # Local imports
 from helper_functions import models, noaa_data, ofam3_data
@@ -102,13 +102,17 @@ def preprocess_data(anomaly, data, dates, lats, longs, num_sensors, sensor_place
     # Normalise data. 
     # Cast to float32 here so every model (torch or numpy) sees
     # bit-identical inputs and targets - torch models need float32 anyway.
-    sc = MinMaxScaler()
+    sc = StandardScaler()
     sc = sc.fit(train_data)  # Computes min and max from training data only (prevent data leakage)
     data_dict = {
         "train": sc.transform(train_data).astype(np.float32),
         "val": sc.transform(val_data).astype(np.float32),
         "test": sc.transform(test_data).astype(np.float32),
     }
+    print(f"Mean of standardised training data: {np.mean(data_dict["train"])}")
+    print(f"Std of standardised training data: {np.std(data_dict["train"])}")
+    print(f"Mean of standardised test data: {np.mean(data_dict["test"])}")
+    print(f"Mean of standardised test data: {np.std(data_dict["test"])}")
 
     # Sensor placement
     if sensor_placement == "random":

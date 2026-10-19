@@ -35,7 +35,7 @@ Models:
 - RBF Interpolation: using scipy implementation
 
 # Usage
-TBC
+`python reconstructing_sst.py v3 NOAA SHRED-LSTM,SHRED-GRU,SDN,POD,RBFI 30`
 
 # References:
 [[1]](https://psl.noaa.gov/data/gridded/data.noaa.oisst.v2.html) NOAA dataset origin, https://psl.noaa.gov/data/gridded/data.noaa.oisst.v2.html
