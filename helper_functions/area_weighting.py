@@ -87,3 +87,8 @@ def area_weighted_mean(data, lats, longs):
     mean = [np.sum(d * areas)/np.sum(areas) for d in data]
 
     return mean
+
+# TODO:
+# - Area weighting for loss fucntion
+# - Area weighting for metrics
+# - Update area-weighting code for evaluation plots to use this scripts functions
