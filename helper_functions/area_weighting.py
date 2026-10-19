@@ -63,8 +63,6 @@ def area_weighted_mean(data, lats, longs):
     for lat, long in zip(lats, longs):
         coords = grid_square_coords(lat, long, extent=infer_resolution(lats))
         poly = Polygon(coords)
-        # plot_polygon(poly)
-        # plt.show()
         geod = Geod(ellps="WGS84")
         area_m2, _ = geod.geometry_area_perimeter(poly)
         areas.append(area_m2)
