@@ -17,32 +17,36 @@ from tqdm import tqdm
 # from shapely.plotting import plot_polygon
 
 
-def evaluate_metrics(y_pred, y_true):
+def evaluate_metrics(y_pred, y_true, weights=None):
     """Calculate metrics from test reconstructions
 
     Args:
         y_pred (numpy array): predicted y (full-field) for each sequence in test set
         y_true (numpy array): corresponding true y (full-field) for each sequence in test set
+        weights (numpy array): Area weights normalised to have mean 1 over the cells or None
 
     Returns:
         None
     """
-    mse = MSE(y_pred=y_pred, y_true=y_true)
-    # confirm that sklearn MSE direct calculation is same as doing it by timestep
-    assert np.isclose(mse, np.mean([MSE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
+    if weights is None:
+        mse = MSE(y_pred=y_pred, y_true=y_true)
+        # confirm that sklearn MSE direct calculation is same as doing it by timestep
+        assert np.isclose(mse, np.mean([MSE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
 
-    mae = MAE(y_pred=y_pred, y_true=y_true)
-    # confirm that sklearn MAE direct calculation is same as doing it by timestep
-    assert np.isclose(mae, np.mean([MAE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
+        mae = MAE(y_pred=y_pred, y_true=y_true)
+        # confirm that sklearn MAE direct calculation is same as doing it by timestep
+        assert np.isclose(mae, np.mean([MAE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
 
-    r2_sklearn = r2_score(y_pred=y_pred, y_true=y_true)
-    r2 = np.mean([r2_score(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))])  # needs hand-holding to compare the correct things
-    assert not np.isclose(r2, r2_sklearn)  # confirm that r2 by sklearn directly is very different to the per timestep version
+        r2_sklearn = r2_score(y_pred=y_pred, y_true=y_true)
+        r2 = np.mean([r2_score(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))])  # needs hand-holding to compare the correct things
+        assert not np.isclose(r2, r2_sklearn)  # confirm that r2 by sklearn directly is very different to the per timestep version
 
-    print(f"RMSE:\t{np.sqrt(mse):.3f}")
-    print(f"MSE:\t{mse:.3f}")
-    print(f"MAE:\t{mae:.3f}")
-    print(f"R2:\t{r2:.3f}")
+
+    
+    label = "area-weighted" if weights is not None else "unweighted"
+    print(f"Metrics ({label}):")
+    for name in ["RMSE", "MSE", "NMSE", "MAE", "R2"]:
+        print(f"{name}:\t{metrics[name]:.3f}")
 
 
 def mask_array_by_lat_long(array, lats, longs, area="GS"):

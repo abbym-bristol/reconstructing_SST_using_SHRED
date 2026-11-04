@@ -112,7 +112,12 @@ class AreaWeightedMSELoss(torch.nn.Module):
  
     With weights of all ones this is identical to torch.nn.MSELoss().
     """
-    def __init__(self, weights):  # noqa: D107
+    def __init__(self, weights):
+        """Init
+        
+        Args:
+            weights (numpy array): Area weights normalised to have mean 1 over the cells
+        """
         super().__init__()
         self.weights = torch.as_tensor(weights, dtype=torch.float32)
 
@@ -120,10 +125,8 @@ class AreaWeightedMSELoss(torch.nn.Module):
         """Forward pass
 
         Args:
-            inputs (tensor):
-            targets (tensor):
-            weights (numpy array): Area weights normalised to have mean 1 over the cells
-            device (str): 'cuda' if torch.cuda.is_available() else 'cpu'
+            inputs (tensor): input data
+            targets (tensor): target data (ground truth)
 
         Return:
             Area Weighted MSE Loss
