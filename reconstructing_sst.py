@@ -30,6 +30,7 @@ from sklearn.preprocessing import StandardScaler
 
 # Local imports
 from helper_functions import models, noaa_data, ofam3_data
+from helper_functions.area_weighting import area_weights
 from helper_functions.pod import qr_place, svd_basis
 from helper_functions.preprocess_data import (
     TimeSeriesDataset,
@@ -138,7 +139,12 @@ def to_torch_dataset(split_windows, input_key, device):
     """Wrap a view of the shared windows as a torch dataset (no re-indexing happens here)
     
     Args:
-        TBC
+        split_windows (dict): windows data for a split (train, val or test) containing:
+            sensor_seqs (N, lags, n_sensors), sensor_now (N, n_sensors),
+            truth (N, m), dates (N,), target_idx (N,), where N = T - lags + 1
+        input_key (str): "sensor_seqs" or "sensor_now" for whether using sequences
+            or single timestamp sensor inputs (i.e. SHRED vs SDN models)
+        device (str): 'cuda' if torch.cuda.is_available() else 'cpu'
     
     Returns:
         (TimeSeriesDataset): Torch dataset of timeseries data
@@ -148,7 +154,7 @@ def to_torch_dataset(split_windows, input_key, device):
     return TimeSeriesDataset(X, Y)
 
 
-def shred_sdn_reconstructions(windows, hidden_dim, model_type, num_sensors, num_points):
+def shred_sdn_reconstructions(windows, hidden_dim, model_type, num_sensors, num_points, weights):
     """Train and validate a SHRED or SDN model on the shared windows, then reconstruct the test split
  
     SHRED uses the sensor history (sensor_seqs); SDN uses only the final step (sensor_now).
@@ -160,6 +166,7 @@ def shred_sdn_reconstructions(windows, hidden_dim, model_type, num_sensors, num_
         model_type (str): SHRED-LSTM, SHRED-GRU or SDN
         num_sensors (int): number of synthetic sensors
         num_points (int): size of the full field (m)
+        weights (numpy array): Area weights normalised to have mean 1 over the cells or None
  
     Returns:
         test_recons (numpy array): normalised reconstructions, shape (N, m)
@@ -182,7 +189,7 @@ def shred_sdn_reconstructions(windows, hidden_dim, model_type, num_sensors, num_
     val_ds = to_torch_dataset(windows["val"], input_key, device)
 
     # Train and validate model
-    validation_errors = models.fit(model, train_ds, val_ds, batch_size=64, num_epochs=1000, lr=1e-3, verbose=True, patience=5)
+    validation_errors = models.fit(model, train_ds, val_ds, batch_size=64, num_epochs=1000, lr=1e-3, verbose=True, patience=5, weights=weights)
     print('Validation Reconstruction Error: ', validation_errors)
 
     # Test
@@ -271,6 +278,7 @@ if __name__ == "__main__":
 
     # Optional - Bool flags
     parser.add_argument("-a", "--anomaly", action="store_true", help="Use anomalies to train if this flag is used")
+    parser.add_argument("-w", "--weighted", action="store_true", help="Use area weighted loss functions in training if this flag is used")
 
     # Optional - defaults set
     parser.add_argument("-f", "--filepath", help="File path to save results under",
@@ -279,6 +287,7 @@ if __name__ == "__main__":
     parser.add_argument("-l", "--lags", help="Lags (sequence length in weeks)", default=52, type=int)
     parser.add_argument("-r", "--area", help="Area of ocean to use", default="NA", choices=["world", "NA", "GS"])
     parser.add_argument("-p", "--sensor_placement", help="Type of sensor placement to use; choices are random or QR", choices=["random", "QR"], default="random")
+    
 
     args = parser.parse_args()
 
@@ -328,10 +337,16 @@ if __name__ == "__main__":
         print("Saving results under: ", model_directory)
         os.makedirs(model_directory, exist_ok=True)
 
+        if args.weighted:
+            print("Loss function will be area weighted")
+            weights = area_weights(lats, longs)
+        else:
+            weights = None
+
         # Build sequences
         if model_type in ["SHRED-LSTM", "SHRED-GRU", "SDN"]:
             recons_norm = shred_sdn_reconstructions(windows, hidden_dim=args.hidden_dim, model_type=model_type,
-                                                    num_sensors=args.num_sensors, num_points=num_points)
+                                                    num_sensors=args.num_sensors, num_points=num_points, weights=weights)
         elif model_type == "POD":
             recons_norm = pod_reconstructions(windows["test"], num_sensors=args.num_sensors, sensor_locations=sensor_locations,
                                               sensor_placement=args.sensor_placement, U_r=U_r)
@@ -342,7 +357,7 @@ if __name__ == "__main__":
 
         test_recons = norm_model.inverse_transform(recons_norm)
         np.save(f"{model_directory}/recons", test_recons)
- 
+
         rel_err = np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth)
         print(f"{model_type} test relative reconstruction error: {rel_err:.4f}")
 

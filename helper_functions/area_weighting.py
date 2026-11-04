@@ -7,6 +7,7 @@ from shapely.geometry import Polygon
 
 
 def infer_resolution(lats):
+    # CLAUDE FUNCTION
     """Infers resolution of data
     
     Infer grid spacing (degrees) from the latitudes of a regular grid
@@ -88,7 +89,48 @@ def area_weighted_mean(data, lats, longs):
 
     return mean
 
+
+def area_weights(lats, longs):
+    """Normalised area weights
+ 
+    Mean-1 normalisation keeps an area-weighted MSE on the same scale as the unweighted one,
+    so learning rates / early-stopping behaviour stay comparable.
+
+    Args:
+        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
+        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
+
+    Returns:
+        (numpy array): Area weights normalised to have mean 1 over the cells
+    """
+    areas = grid_square_areas(lats, longs)
+    return areas / areas.mean()
+
+
+class AreaWeightedMSELoss(torch.nn.Module):
+    """Area weighted version of torch.nn.MSELoss that weights each grid cell by its area.
+ 
+    With weights of all ones this is identical to torch.nn.MSELoss().
+    """
+    def __init__(self, weights):  # noqa: D107
+        super().__init__()
+        self.weights = torch.as_tensor(weights, dtype=torch.float32)
+
+    def forward(self, inputs, targets):
+        """Forward pass
+
+        Args:
+            inputs (tensor):
+            targets (tensor):
+            weights (numpy array): Area weights normalised to have mean 1 over the cells
+            device (str): 'cuda' if torch.cuda.is_available() else 'cpu'
+
+        Return:
+            Area Weighted MSE Loss
+        """
+        return (((inputs - targets)**2 ) * self.weights).mean()
+
+
 # TODO:
-# - Area weighting for loss fucntion
 # - Area weighting for metrics
 # - Update area-weighting code for evaluation plots to use this scripts functions

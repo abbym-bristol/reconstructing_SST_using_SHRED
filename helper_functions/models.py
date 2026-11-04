@@ -2,13 +2,17 @@
 
 Copied from https://github.com/Jan-Williams/pyshred/blob/main/models.py
 
-Modified: adding GRU optional functionality
+Modified:
+- adding GRU optional functionality
+- adding area weighting on loss function during .fit()
 """
 
 import torch  # noqa: D100, I001
 from torch.utils.data import DataLoader
 import numpy as np
 from copy import deepcopy
+
+from helper_functions.area_weighting import AreaWeightedMSELoss
 
 class SHRED(torch.nn.Module):
     '''SHRED model accepts input size (number of sensors), output size (dimension of high-dimensional spatio-temporal state, hidden_size, number of LSTM layers,
@@ -90,10 +94,17 @@ class SDN(torch.nn.Module):
 
         return output
 
-def fit(model, train_dataset, valid_dataset, batch_size=64, num_epochs=4000, lr=1e-3, verbose=False, patience=5):
+def fit(model, train_dataset, valid_dataset, batch_size=64, num_epochs=4000, lr=1e-3, verbose=False, patience=5, weights=None):
     '''Function for training SHRED and SDN models'''  # noqa: D300, D401
     train_loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size)
-    criterion = torch.nn.MSELoss()
+    device = next(model.parameters()).device  # Load device
+
+    # Set criterion to use -> optional area weighting
+    if weights is None:
+        criterion = torch.nn.MSELoss()
+    else:
+        criterion = AreaWeightedMSELoss(weights=weights).to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     val_error_list = []
     patience_counter = 0
