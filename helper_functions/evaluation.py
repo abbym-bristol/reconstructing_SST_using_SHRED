@@ -1,20 +1,29 @@
 """evaluation.py"""
 
-import os
-
-import cv2
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from pyproj import Geod
-from shapely.geometry import Polygon
-from skimage.metrics import structural_similarity as SSI
-from sklearn.metrics import mean_absolute_error as MAE
-from sklearn.metrics import mean_squared_error as MSE
-from sklearn.metrics import r2_score
-from tqdm import tqdm
 
-# from shapely.plotting import plot_polygon
+
+def weighted_mae(y_true, y_pred, weights):
+    """Weighted Mean Absolute Error"""
+    err = y_true - y_pred
+    mae_by_week = np.sum(np.abs(err) * weights, axis=1) / np.sum(weights)  # Sum over each week, not across all weeks
+    return np.mean(mae_by_week)
+
+
+def weighted_mse(y_true, y_pred, weights):
+    """Weighted Mean Square Error"""
+    err = y_true - y_pred
+    mse_by_week = np.sum(err**2 * weights, axis=1) / np.sum(weights)  # Sum over each week, not across all weeks
+    return np.mean(mse_by_week), mse_by_week
+
+
+def weighted_r2(y_true, y_pred, weights):
+    """Weighted R squared correlation"""
+    _, mse_by_week = weighted_mse(y_true, y_pred, weights)
+    y_bar = np.sum(weights * y_true, axis=1) / np.sum(weights)
+    var_by_week = np.sum((y_true - y_bar[:, None])**2 * weights, axis = 1) / np.sum(weights)
+    r2_by_week = 1 - mse_by_week/var_by_week
+    return np.mean(r2_by_week)  # mean at the end to treat every week equally
 
 
 def evaluate_metrics(y_pred, y_true, weights=None):
@@ -29,24 +38,18 @@ def evaluate_metrics(y_pred, y_true, weights=None):
         None
     """
     if weights is None:
-        mse = MSE(y_pred=y_pred, y_true=y_true)
-        # confirm that sklearn MSE direct calculation is same as doing it by timestep
-        assert np.isclose(mse, np.mean([MSE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
+        weights = np.ones(y_true.shape[-1])
 
-        mae = MAE(y_pred=y_pred, y_true=y_true)
-        # confirm that sklearn MAE direct calculation is same as doing it by timestep
-        assert np.isclose(mae, np.mean([MAE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
+    metrics = {
+        "MAE": weighted_mae(y_true, y_pred, weights),
+        "MSE": weighted_mse(y_true, y_pred, weights),
+        "R2": weighted_r2(y_true, y_pred, weights)
+    }
 
-        r2_sklearn = r2_score(y_pred=y_pred, y_true=y_true)
-        r2 = np.mean([r2_score(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))])  # needs hand-holding to compare the correct things
-        assert not np.isclose(r2, r2_sklearn)  # confirm that r2 by sklearn directly is very different to the per timestep version
-
-
-    
     label = "area-weighted" if weights is not None else "unweighted"
     print(f"Metrics ({label}):")
-    for name in ["RMSE", "MSE", "NMSE", "MAE", "R2"]:
-        print(f"{name}:\t{metrics[name]:.3f}")
+    for k,v in metrics.items():
+        print(f"{k}:\t{v:.3f}")
 
 
 def mask_array_by_lat_long(array, lats, longs, area="GS"):

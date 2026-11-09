@@ -316,12 +316,19 @@ if __name__ == "__main__":
     # Ground truth is computed and saved once, so it cannot differ between models
     test_ground_truth = norm_model.inverse_transform(windows["test"]["truth"])
     np.save(f"{directory}/truth", test_ground_truth)
+
+    if args.weighted:
+        print("Loss function will be area weighted")
+        weights = area_weights(lats, longs)
+    else:
+        weights = None
  
     metadata = {
         "sensor_locations": list(sensor_locations),
         "sensor_coords": list(sensor_coords),
         "dates": dates_dict,
         "test_lag_dates": windows["test"]["dates"],
+        "weights": weights
     }
     if bulk_mean is not None:
         metadata["bulk_mean"] = bulk_mean
@@ -336,12 +343,6 @@ if __name__ == "__main__":
         model_directory = os.path.join(directory, model_type)
         print("Saving results under: ", model_directory)
         os.makedirs(model_directory, exist_ok=True)
-
-        if args.weighted:
-            print("Loss function will be area weighted")
-            weights = area_weights(lats, longs)
-        else:
-            weights = None
 
         # Build sequences
         if model_type in ["SHRED-LSTM", "SHRED-GRU", "SDN"]:
