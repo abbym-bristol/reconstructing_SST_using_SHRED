@@ -37,16 +37,17 @@ def evaluate_metrics(y_pred, y_true, weights=None):
     Returns:
         None
     """
+    label = "unweighted" if weights is None else "area-weighted"
     if weights is None:
         weights = np.ones(y_true.shape[-1])
 
+    mse, _ = weighted_mse(y_true, y_pred, weights)
     metrics = {
         "MAE": weighted_mae(y_true, y_pred, weights),
-        "MSE": weighted_mse(y_true, y_pred, weights),
+        "MSE": mse,
         "R2": weighted_r2(y_true, y_pred, weights)
     }
 
-    label = "area-weighted" if weights is not None else "unweighted"
     print(f"Metrics ({label}):")
     for k,v in metrics.items():
         print(f"{k}:\t{v:.3f}")
