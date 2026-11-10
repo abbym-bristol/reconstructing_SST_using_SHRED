@@ -49,22 +49,30 @@ def test_evaluate_metrics_prints_weighted_results(capsys):
     y_pred = np.array([[1, 1], [3, 3]])
     weights = np.array([3, 2])
 
-    result = evaluate_metrics(y_pred, y_true, weights)
-    output = capsys.readouterr().out
+    _, weights_out = evaluate_metrics(y_true, y_pred, weights)
+    
+    np.testing.assert_allclose(weights_out, weights)
 
-    assert result is None
+    output = capsys.readouterr().out
     assert "Metrics (area-weighted):" in output
     assert "MAE:\t1.000" in output
     assert "MSE:\t2.600" in output
     assert "R2:\t-0.667" in output
 
 
-def test_evaluate_metrics_labels_default_weights_unweighted(capsys):
+test_data = [  # y_true, y_pred, results
+    (np.array([[1, 3, 2], [1, 0, 2]]), np.array([[1, 0, 2], [1, 0, 2]]), (0.5, 1.5, -1.25)),
+    (np.array([[1, 3], [3, 6]]), np.array([[1, 1], [3, 3]]), (1.25, 3.25, -1)),
+]
+
+@pytest.mark.parametrize("y_true,y_pred,results", test_data)
+def test_evaluate_metrics_labels_default_weights_unweighted(capsys, y_true, y_pred, results):
     """Check that evaluate_metrics labels its default-weight results unweighted."""
-    y_true = np.array([[1, 3], [3, 6]])
-    y_pred = np.array([[1, 1], [3, 3]])
+    metrics, weights_out = evaluate_metrics(y_true, y_pred)
+    np.testing.assert_allclose(weights_out,  np.ones(y_true.shape[-1]))
 
-    evaluate_metrics(y_pred, y_true)
     output = capsys.readouterr().out
-
     assert "Metrics (unweighted):" in output
+    assert metrics["MAE"] == pytest.approx(results[0])
+    assert metrics["MSE"] == pytest.approx(results[1])
+    assert metrics["R2"] == pytest.approx(results[2])
