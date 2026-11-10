@@ -94,12 +94,16 @@ class AreaWeightedMSELoss(torch.nn.Module):
     """Area weighted version of torch.nn.MSELoss that weights each grid cell by its area.
  
     With weights of all ones this is identical to torch.nn.MSELoss().
+
+     Notes:
+        Weights should represent relative importance or physical areas
+        The weights will be applied to individual grid cells in forward()
     """
     def __init__(self, weights):
         """Init
         
         Args:
-            weights (numpy array): Area weights normalised to have mean 1 over the cells
+            weights (numpy array): Weights as the area for each grid cell
         """
         super().__init__()
         self.weights = torch.as_tensor(weights, dtype=torch.float32)
@@ -117,6 +121,4 @@ class AreaWeightedMSELoss(torch.nn.Module):
         return (((inputs - targets)**2 ) * self.weights).mean()
 
 
-# TODO:
-# - Area weighting for metrics
-# - Update area-weighting code for evaluation plots to use this scripts functions
+# TODO: Update area-weighting code for evaluation plots to use this scripts functions
