@@ -320,7 +320,7 @@ if __name__ == "__main__":
     if args.weighted:
         print("Loss function will be area weighted")
         weights = grid_square_areas(lats, longs)
-        # Note: not mean-1 normalised so weighted losses will be on a different scale to the unweighted ones
+        # NOTE: not mean-1 normalised so weighted losses will be on a different scale to the unweighted ones
     else:
         weights = None
  
