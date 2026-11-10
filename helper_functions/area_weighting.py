@@ -90,23 +90,6 @@ def area_weighted_mean(data, lats, longs):
     return mean
 
 
-def area_weights(lats, longs):
-    """Normalised area weights
- 
-    Mean-1 normalisation keeps an area-weighted MSE on the same scale as the unweighted one,
-    so learning rates / early-stopping behaviour stay comparable.
-
-    Args:
-        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
-        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
-
-    Returns:
-        (numpy array): Area weights normalised to have mean 1 over the cells
-    """
-    areas = grid_square_areas(lats, longs)
-    return areas / areas.mean()
-
-
 class AreaWeightedMSELoss(torch.nn.Module):
     """Area weighted version of torch.nn.MSELoss that weights each grid cell by its area.
  

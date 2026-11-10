@@ -30,7 +30,7 @@ from sklearn.preprocessing import StandardScaler
 
 # Local imports
 from helper_functions import models, noaa_data, ofam3_data
-from helper_functions.area_weighting import area_weights
+from helper_functions.area_weighting import grid_square_areas
 from helper_functions.pod import qr_place, svd_basis
 from helper_functions.preprocess_data import (
     TimeSeriesDataset,
@@ -319,7 +319,8 @@ if __name__ == "__main__":
 
     if args.weighted:
         print("Loss function will be area weighted")
-        weights = area_weights(lats, longs)
+        weights = grid_square_areas(lats, longs)
+        # Note: not mean-1 normalised so weighted losses will be on a different scale to the unweighted ones
     else:
         weights = None
  
