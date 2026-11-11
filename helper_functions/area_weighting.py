@@ -5,6 +5,8 @@ import torch
 from pyproj import Geod
 from shapely.geometry import Polygon
 
+from helper_functions.noaa_data import crop_to_area
+
 
 def infer_resolution(lats):
     # CLAUDE FUNCTION
@@ -23,8 +25,8 @@ def infer_resolution(lats):
     return float(np.min(np.diff(unique_lats)))
  
 
-def grid_square_coords(lat, long, extent=0.25):
-    """Determine the coordinates of a grid square of ME4OH data
+def grid_square_coords(lat, long, extent):
+    """Determine the coordinates of a grid square centered on lat & long
     
     Args:
         lat (float): midpoint latitude (degrees) of the grid square
@@ -70,6 +72,58 @@ def grid_square_areas(lats, longs):
     areas = np.array(areas)
 
     return areas
+
+
+class LatLongGrid():
+    """Lat-long grid and associated cell midpoints, coordinates and areas"""
+    def __init__(self, data_lats, area):
+        """Init
+
+        Args:
+            data_lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
+        """
+        self.resolution = infer_resolution(data_lats)
+        self.__get_midpoints_grid(area)
+        self.__get_grid_corner_coords()
+        self.__get_grid_cell_areas()
+
+
+    def __get_midpoints_grid(self, area):
+        """Get grid cell midpoints in Latitude and Longitude"""
+        lat_range = np.arange(-90+self.resolution/2, 90.0, self.resolution)
+        long_range = np.arange(0+self.resolution/2, 360.0, self.resolution)
+
+        # 2D meshgrid if for lat/lon paired at every grid cell
+        lon2d, lat2d = np.meshgrid(long_range, lat_range)  # shape (180, 360) each
+        long_midpoints = lon2d.reshape(-1)
+        long_midpoints = np.where(long_midpoints > 180, long_midpoints - 360, long_midpoints)
+        lat_midpoints = lat2d.reshape(-1)
+
+        if area != "world":
+            lat_midpoints, long_midpoints = crop_to_area(lats=lat_midpoints, longs=long_midpoints, area=area)
+
+        self.long_midpoints = long_midpoints
+        self.lat_midpoints = lat_midpoints
+
+        print(lat_range)
+        print(long_range)
+
+        
+    def __get_grid_corner_coords(self):
+        """Get coordinates of grid cell corners in Latitude and Longitude"""
+        self.cell_coords = [grid_square_coords(lat=lat, long=long, extent=self.resolution)
+                        for lat, long in zip(self.lat_midpoints, self.long_midpoints)]
+
+    def __get_grid_cell_areas(self):
+        """Get grid cell areas"""
+        areas = []
+        for c in self.cell_coords:
+            poly = Polygon(c)
+            geod = Geod(ellps="WGS84")
+            area_m2, _ = geod.geometry_area_perimeter(poly)
+            areas.append(area_m2)
+
+        self.cell_areas = np.array(areas)
 
 
 def area_weighted_mean(data, lats, longs):
