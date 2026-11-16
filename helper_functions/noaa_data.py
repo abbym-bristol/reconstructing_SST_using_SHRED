@@ -60,10 +60,10 @@ def load_data(data_path='Data/NOAA/SST_data.mat'):
 
 
 def crop_to_area(temps, lats, longs, area="NA"):
-    """Crop SST data to a specific geographic area using boolean masking.
+    """Crop NOAA SST data to a specific geographic area using boolean masking.
 
     Args:
-        temps (array): array with shape (time_steps, n_points) containing all SST measurements
+        temps (array): 2D array with shape (time_steps, n_points) containing all SST measurements
         lats (array): array containing the latitude values for the data
         longs (array): array containing the longitude values for the data
         area (str, optional): area to crop to. Current options are "NA" (North Atlantic) or

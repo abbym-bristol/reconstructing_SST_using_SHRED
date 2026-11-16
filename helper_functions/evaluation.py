@@ -1,141 +1,94 @@
 """evaluation.py"""
 
-import os
-
-import cv2
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-from pyproj import Geod
-from shapely.geometry import Polygon
-from skimage.metrics import structural_similarity as SSI
-from sklearn.metrics import mean_absolute_error as MAE
-from sklearn.metrics import mean_squared_error as MSE
-from sklearn.metrics import r2_score
-from tqdm import tqdm
-
-# from shapely.plotting import plot_polygon
 
 
-def evaluate_metrics(y_pred, y_true):
+def weighted_mae(y_true, y_pred, weights):
+    """Weighted Mean Absolute Error given by:
+    
+    1/Σw_ij Σ|u_ij - û_ij|w_ij,
+
+    where u is y_true, û is y_pred and w are the corresponding weights.
+
+    Args:
+        See evaluate_metrics
+
+    Returns:
+        (float): mean MAE value across all weeks in y_pred
+    """
+    err = y_true - y_pred
+    mae_by_week = np.sum(np.abs(err) * weights, axis=1) / np.sum(weights)  # Sum over each week, not across all weeks
+    return np.mean(mae_by_week)
+
+
+def weighted_mse(y_true, y_pred, weights):
+    """Weighted Mean Square Error given by:
+    
+    1/Σw_ij Σ(u_ij - û_ij)**2|w_ij,
+
+    where u is y_true, û is y_pred and w are the corresponding weights.
+
+    Args:
+        See evaluate_metrics
+
+    Returns:
+        (float): mean MSE value across all weeks in y_pred
+        mse_by_week (numpy array): MSE for each week in y_pred
+    """
+    err = y_true - y_pred
+    mse_by_week = np.sum(err**2 * weights, axis=1) / np.sum(weights)  # Sum over each week, not across all weeks
+    return np.mean(mse_by_week), mse_by_week
+
+
+def weighted_r2(y_true, y_pred, weights):
+    """Weighted R squared correlation given by:
+    
+    R2 = 1 - MSE/VAR
+    VAR = 1/Σw_ij Σ(u_ij - ū_ij)**2|w_ij
+    ū = (Σu_ij * w_ij)/Σw_ij
+
+    where u is y_true, ū is the weighted mean of y_true and w are the corresponding weights.
+
+    Args:
+        See evaluate_metrics
+
+    Returns:
+        (float): mean R2 value across all weeks in y_pred
+    """
+    _, mse_by_week = weighted_mse(y_true, y_pred, weights)
+    y_bar = np.sum(weights * y_true, axis=1) / np.sum(weights)
+    var_by_week = np.sum((y_true - y_bar[:, None])**2 * weights, axis = 1) / np.sum(weights)
+    r2_by_week = 1 - mse_by_week/var_by_week
+    return np.mean(r2_by_week)  # mean at the end to treat every week equally
+
+
+def evaluate_metrics(y_true, y_pred, weights=None):
     """Calculate metrics from test reconstructions
 
     Args:
-        y_pred (numpy array): predicted y (full-field) for each sequence in test set
-        y_true (numpy array): corresponding true y (full-field) for each sequence in test set
+        y_true (numpy array): corresponding true y (full-field) for each sequence (week) in test set
+        y_pred (numpy array): predicted y (full-field) for each sequence (week) in test set
+        weights (numpy array, optional): Area weights corresponding to the predicted full-field shape (y_pred.shape[1]) or None
 
     Returns:
         None
     """
-    mse = MSE(y_pred=y_pred, y_true=y_true)
-    assert np.isclose(mse, np.mean([MSE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
-    
-    rmse = np.sqrt(mse)
-    nmse = mse/np.mean(y_true)**2
+    label = "unweighted" if weights is None else "area-weighted"
+    if weights is None:
+        weights = np.ones(y_true.shape[-1])
 
-    mae = MAE(y_pred=y_pred, y_true=y_true)
-    assert np.isclose(mae, np.mean([MAE(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))]))
+    mse, _ = weighted_mse(y_true, y_pred, weights)
+    metrics = {
+        "MAE": weighted_mae(y_true, y_pred, weights),
+        "MSE": mse,
+        "R2": weighted_r2(y_true, y_pred, weights)
+    }
 
-    r2_direct = r2_score(y_pred=y_pred, y_true=y_true)
-    r2 = np.mean([r2_score(y_pred=y_pred[i], y_true=y_true[i]) for i in range(len(y_pred))])  # needs hand-holding to compare the correct things
-    assert not np.isclose(r2, r2_direct)
+    print(f"Metrics ({label}):")
+    for k,v in metrics.items():
+        print(f"{k}:\t{v:.3f}")
 
-    print(f"RMSE:\t{rmse:.3f}")
-    print(f"MSE:\t{mse:.3f}")
-    print(f"NMSE:\t{nmse:.3f}")
-    print(f"MAE:\t{mae:.3f}")
-    print(f"R2:\t{r2:.3f}")
-
-    ssi = np.mean([SSI(y_pred[i], y_true[i],
-                    data_range=(max(y_pred[i].max(), y_true[i].max()) - min(y_pred[i].min(), y_true[i].min())))
-                    for i in range(len(y_pred))])
-    print(f"Average SSI:\t{ssi:.3f}")
-
-
-def ssi_by_image(test_values, true_values, lats, longs, plot_images=False):
-    """Calculate SSI values for each test + true set of values
-    Based on: https://stackoverflow.com/questions/71567315/how-to-get-the-ssim-comparison-score-between-two-images
-
-    Args:
-        test_values (array): test values, e.g. a reconstruction of SST or OHC produced by SHRED
-        true_values (array): true values, e.g. a ground truth of SST or OHC from ME4OH
-        lats (numpy array): array of latitudes corresponding to array values
-        longs (numpy array): array of longitudes corresponding to array values
-        plot_images (bool, optional): whether or not to plot images used, difference plot,
-            and masked difference on the test image. Defaults to False.
-
-    Returns:
-        ssi_images (list): SSI values for each test/true pair.
-        Optional: plots of images used, difference plot, and masked difference on the test image.
-    """  # noqa: D205
-    ssi_images = []
-    for i in range(len(test_values)):
-        
-        truth = true_values[i]
-        test = test_values[i]
-
-        # ISSUE: changing the figure size changes the SSI score.... probably because scatter points no longer overlap + more white is more similar
-        plt.scatter(x=longs, y=lats, c=test, cmap='plasma', s=1)
-        ax = plt.gca()
-        ax.set_xlim([-80, 0])
-        ax.set_ylim([0, 60])
-        plt.axis('off')
-        plt.savefig("images/test.png", bbox_inches='tight', pad_inches=0)
-        plt.close()
-
-        plt.scatter(x=longs, y=lats, c=truth, cmap='plasma', s=1)
-        ax = plt.gca()
-        ax.set_xlim([-80, 0])
-        ax.set_ylim([0, 60])
-        plt.axis('off')
-        plt.savefig("images/truth.png", bbox_inches='tight', pad_inches=0)
-        plt.close()
-
-        # cv2 reads images as BGR by default, where as plt uses RGB format. So Blue and Red color will get flipped if not converted.
-        test_img = cv2.imread("images/test.png")
-        test_img = cv2.cvtColor(test_img, cv2.COLOR_BGR2RGB)
-        truth_img = cv2.imread("images/truth.png")
-        truth_img = cv2.cvtColor(truth_img, cv2.COLOR_BGR2RGB)
-
-        # Convert images to grayscale
-        test_gray = cv2.cvtColor(test_img, cv2.COLOR_BGR2GRAY)
-        truth_gray = cv2.cvtColor(truth_img, cv2.COLOR_BGR2GRAY)
-
-        score, diff = SSI(test_gray, truth_gray, full=True)
-        diff = (diff * 255).astype("uint8")  # Convert to 8-bit unsigned integers
-        # print("Image similarity", score)
-        ssi_images.append(score)
-
-        if plot_images:
-            # Threshold the difference image, followed by finding contours to
-            # obtain the regions of the two input images that differ
-            thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-            contours = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            contours = contours[0] if len(contours) == 2 else contours[1]
-
-            # mask = np.zeros(test_img.shape, dtype='uint8')
-            filled_test = test_img.copy()
-
-            for c in contours:
-                area = cv2.contourArea(c)
-                if area > 40:
-                    # x,y,w,h = cv2.boundingRect(c)
-                    # cv2.rectangle(test_img, (x, y), (x + w, y + h), (36,255,12), 2)
-                    # cv2.rectangle(truth_img, (x, y), (x + w, y + h), (36,255,12), 2)
-                    # cv2.drawContours(mask, [c], 0, (0,255,255), -1)
-                    cv2.drawContours(filled_test, [c], 0, (0,255,255), -1)
-
-            diff = cv2.cvtColor(diff, cv2.COLOR_BGR2RGB)
-            for image in [test_img, truth_img, diff, filled_test]:
-                plt.imshow(image)
-                plt.axis('off')
-                plt.show()
-                plt.clf()
-
-    os.remove("images/test.png")
-    os.remove("images/truth.png")
-
-    return ssi_images
+    return metrics, weights
 
 
 def mask_array_by_lat_long(array, lats, longs, area="GS"):

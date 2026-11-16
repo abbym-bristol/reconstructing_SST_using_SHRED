@@ -1,13 +1,15 @@
 """area_weighting.py"""
 
 import numpy as np
+import pandas as pd
 import torch
 from pyproj import Geod
 from shapely.geometry import Polygon
 
+from helper_functions.noaa_data import crop_to_area
+
 
 def infer_resolution(lats):
-    # CLAUDE FUNCTION
     """Infers resolution of data
     
     Infer grid spacing (degrees) from the latitudes of a regular grid
@@ -23,8 +25,8 @@ def infer_resolution(lats):
     return float(np.min(np.diff(unique_lats)))
  
 
-def grid_square_coords(lat, long, extent=0.25):
-    """Determine the coordinates of a grid square of ME4OH data
+def grid_square_coords(lat, long, extent):
+    """Determine the coordinates of a grid square centered on lat & long
     
     Args:
         lat (float): midpoint latitude (degrees) of the grid square
@@ -43,76 +45,114 @@ def grid_square_coords(lat, long, extent=0.25):
     return coords
 
 
-def grid_square_areas(lats, longs):
+def grid_square_area(lat, long, resolution):
     """Calculate area of each grid square on the globe
-
+    
     Notes: https://pyproj4.github.io/pyproj/stable/api/geod.html
     - only works with areas up to half the size of the globe ;
     - certain large polygons may return negative values.
     - lats should be in the range [-90 deg, 90 deg]
 
     Args:
-        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
-        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
+        lat (float): Latitude corresponding to the center of a grid square
+        long (float): Longitude corresponding to the center of a grid square
+        resolution (float): extent of a grid square
 
     Returns:
-        areas (numpy array): area of each grid cell in m^2, shape (n_cells,)
+        area_m2 (float): area of grid cell in m^2
     """
-    resolution = infer_resolution(lats)
-    areas = []
-    for lat, long in zip(lats, longs):
-        coords = grid_square_coords(lat, long, extent=resolution)
-        poly = Polygon(coords)
-        geod = Geod(ellps="WGS84")
-        area_m2, _ = geod.geometry_area_perimeter(poly)
-        areas.append(area_m2)
+    corner_coords = grid_square_coords(lat, long, extent=resolution)
+    poly = Polygon(corner_coords)
+    geod = Geod(ellps="WGS84")
+    area_m2, _ = geod.geometry_area_perimeter(poly)
+
+    return area_m2
+
+
+class LatLongGrid():
+    """Lat-long grid and associated cell midpoints, coordinates and areas"""
+    def __init__(self, region, resolution):
+        """Init
+
+        Args:
+            region (str): Area of ocean to use, choices: "world", "NA", "GS"
+            resolution (float): grid spacing (degrees) of data
+        """
+        self.resolution = resolution
+        self.__get_grid(region)
+        self.__get_area_map()
+
+
+    def __get_grid(self, region):
+        """Get grid cell midpoints in Latitude and Longitude
+
+        Args:
+            region (str): Area of ocean to use, choices: "world", "NA", "GS"
+        """
+        if region == "GS":
+            min_lat, max_lat = 30.0, 50.0
+            min_long, max_long = -80.0, -30.0
+        elif region == "NA":
+            min_lat, max_lat = 0.0, 60.0
+            min_long, max_long = -80.0, 0.0
+        elif region == "world":
+            min_lat, max_lat = -90.0, 90.0
+            min_long, max_long = -180.0, 180.0
+        else:
+            ValueError("Area specified is not currently configured.")
+
+        # Produce midpoint grid across area
+        lat_range = np.arange(min_lat+self.resolution/2, max_lat, self.resolution)
+        long_range = np.arange(min_long+self.resolution/2, max_long, self.resolution)
+
+        # 2D meshgrid if for lat/lon paired at every grid cell
+        lon2d, lat2d = np.meshgrid(long_range, lat_range)  # shape (180, 360) each
+        long_midpoints = lon2d.reshape(-1)
+        lat_midpoints = lat2d.reshape(-1)
+
+        # Store grid as a dataframe
+        self.grid = pd.DataFrame({
+            "Latitude (degree)": lat_midpoints,
+            "Longitude (degree)": long_midpoints
+        })
+
+
+    def __get_area_map(self):
+        """Get grid cell areas, and make map as pivot table of Latitudes and Longitudes"""
+        areas = [grid_square_area(row["Latitude (degree)"], row["Latitude (degree)"], self.resolution) for _, row in self.grid.iterrows()]
+        self.grid["Area (m2)"] = areas
+        self.map = self.grid.pivot_table(index="Latitude (degree)", columns="Longitude (degree)", values="Area (m2)")
+
+
+    def get_area_weights(self, lats, longs):
+        """Return area of each grid square specified by lats/longs provided
     
-    areas = np.array(areas)
-
-    return areas
-
-
-def area_weighted_mean(data, lats, longs):
-    """Average of data, weighted by area of each grid square on the globe
-
-    Args:
-        data (array): data of shape (timesteps, len(lats)) which stores a particular value
-            (e.g. SST or OHC) for each grid square of the ME4OH full-field OFAM3 dataset
-        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
-        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
-
-    Returns:
-        mean (numpy array): weighted average of data, weighted by the area of each grid square using its latitude and longitude coordinates
-    """
-    areas = grid_square_areas(lats, longs)
-    mean = [np.sum(d * areas)/np.sum(areas) for d in data]
-
-    return mean
-
-
-def area_weights(lats, longs):
-    """Normalised area weights
- 
-    Mean-1 normalisation keeps an area-weighted MSE on the same scale as the unweighted one,
-    so learning rates / early-stopping behaviour stay comparable.
-
-    Args:
-        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
-        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
-
-    Returns:
-        (numpy array): Area weights normalised to have mean 1 over the cells
-    """
-    areas = grid_square_areas(lats, longs)
-    return areas / areas.mean()
+        Args:
+            lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
+            longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
+    
+        Returns:
+            areas (numpy array): area of each grid cell in m^2, shape (n_cells,)
+        """
+        areas = np.array([self.map.at[lat, long] for lat, long in zip(lats, longs)])
+        return areas
 
 
 class AreaWeightedMSELoss(torch.nn.Module):
     """Area weighted version of torch.nn.MSELoss that weights each grid cell by its area.
  
     With weights of all ones this is identical to torch.nn.MSELoss().
+
+     Notes:
+        Weights should represent relative importance or physical areas
+        The weights will be applied to individual grid cells in forward()
     """
-    def __init__(self, weights):  # noqa: D107
+    def __init__(self, weights):
+        """Init
+        
+        Args:
+            weights (numpy array): Weights as the area for each grid cell
+        """
         super().__init__()
         self.weights = torch.as_tensor(weights, dtype=torch.float32)
 
@@ -120,10 +160,8 @@ class AreaWeightedMSELoss(torch.nn.Module):
         """Forward pass
 
         Args:
-            inputs (tensor):
-            targets (tensor):
-            weights (numpy array): Area weights normalised to have mean 1 over the cells
-            device (str): 'cuda' if torch.cuda.is_available() else 'cpu'
+            inputs (tensor): input data
+            targets (tensor): target data (ground truth)
 
         Return:
             Area Weighted MSE Loss
@@ -131,6 +169,4 @@ class AreaWeightedMSELoss(torch.nn.Module):
         return (((inputs - targets)**2 ) * self.weights).mean()
 
 
-# TODO:
-# - Area weighting for metrics
-# - Update area-weighting code for evaluation plots to use this scripts functions
+# TODO: Update area-weighting code for evaluation plots to use this scripts functions
