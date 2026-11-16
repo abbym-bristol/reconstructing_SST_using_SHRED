@@ -10,7 +10,6 @@ from helper_functions.noaa_data import crop_to_area
 
 
 def infer_resolution(lats):
-    # CLAUDE FUNCTION
     """Infers resolution of data
     
     Infer grid spacing (degrees) from the latitudes of a regular grid
@@ -60,7 +59,7 @@ def grid_square_area(lat, long, resolution):
         resolution (float): extent of a grid square
 
     Returns:
-        area (float): area of grid cell in m^2
+        area_m2 (float): area of grid cell in m^2
     """
     corner_coords = grid_square_coords(lat, long, extent=resolution)
     poly = Polygon(corner_coords)
@@ -68,22 +67,6 @@ def grid_square_area(lat, long, resolution):
     area_m2, _ = geod.geometry_area_perimeter(poly)
 
     return area_m2
-
-
-def area_weights(lats, longs):
-    """Calculate area of each grid square specified by lats/longs
-
-    Args:
-        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
-        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
-
-    Returns:
-        areas (numpy array): area of each grid cell in m^2, shape (n_cells,)
-    """
-    resolution = infer_resolution(lats)
-    areas = np.array([grid_square_area(lat, long, resolution) for lat, long in zip(lats, longs)])
-    
-    return areas
 
 
 class LatLongGrid():
@@ -135,7 +118,7 @@ class LatLongGrid():
 
 
     def __get_area_map(self):
-        """Get grid cell areas"""
+        """Get grid cell areas, and make map as pivot table of Latitudes and Longitudes"""
         areas = [grid_square_area(row["Latitude (degree)"], row["Latitude (degree)"], self.resolution) for _, row in self.grid.iterrows()]
         self.grid["Area (m2)"] = areas
         self.map = self.grid.pivot_table(index="Latitude (degree)", columns="Longitude (degree)", values="Area (m2)")
@@ -153,24 +136,6 @@ class LatLongGrid():
         """
         areas = np.array([self.map.at[lat, long] for lat, long in zip(lats, longs)])
         return areas
-
-
-def area_weighted_mean(data, lats, longs):
-    """Average of data, weighted by area of each grid square on the globe
-
-    Args:
-        data (array): data of shape (timesteps, len(lats)) which stores a particular value
-            (e.g. SST or OHC) for each grid square of the ME4OH full-field OFAM3 dataset
-        lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
-        longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
-
-    Returns:
-        mean (numpy array): weighted average of data, weighted by the area of each grid square using its latitude and longitude coordinates
-    """
-    areas = area_weights(lats, longs)
-    mean = [np.sum(d * areas)/np.sum(areas) for d in data]
-
-    return mean
 
 
 class AreaWeightedMSELoss(torch.nn.Module):

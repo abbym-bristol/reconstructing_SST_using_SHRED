@@ -15,8 +15,11 @@ from copy import deepcopy
 from helper_functions.area_weighting import AreaWeightedMSELoss
 
 class SHRED(torch.nn.Module):
-    '''SHRED model accepts input size (number of sensors), output size (dimension of high-dimensional spatio-temporal state, hidden_size, number of LSTM layers,
-    size of fully-connected layers, and dropout parameter'''  # noqa: D205, D209, D300
+    """SHRED model
+
+    Accepts input size (number of sensors), output size (dimension of high-dimensional spatio-temporal state, hidden_size, number of LSTM layers,
+    size of fully-connected layers, and dropout parameter
+    """
     def __init__(self, input_size, output_size, hidden_size=64, hidden_layers=2, l1=350, l2=400, dropout=0.0, seq_model="LSTM"):  # noqa: D107
         super(SHRED,self).__init__()
 
@@ -69,8 +72,11 @@ class SHRED(torch.nn.Module):
 
 
 class SDN(torch.nn.Module):
-    '''SDN model accepts input size (number of sensors), output size (dimension of high-dimensional spatio-temporal state,
-    size of fully-connected layers, and dropout parameter'''  # noqa: D205, D209, D300
+    """SDN model
+
+    Accepts input size (number of sensors), output size (dimension of high-dimensional spatio-temporal state,
+    size of fully-connected layers, and dropout parameter
+    """
     def __init__(self, input_size, output_size, l1=350, l2=400, dropout=0.0):  # noqa: D107
         super(SDN,self).__init__()
         
@@ -95,7 +101,7 @@ class SDN(torch.nn.Module):
         return output
 
 def fit(model, train_dataset, valid_dataset, batch_size=64, num_epochs=4000, lr=1e-3, verbose=False, patience=5, weights=None):
-    '''Function for training SHRED and SDN models'''  # noqa: D300, D401
+    """Train SHRED and SDN models"""
     train_loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size)
     device = next(model.parameters()).device  # Load device
 
@@ -147,9 +153,12 @@ def fit(model, train_dataset, valid_dataset, batch_size=64, num_epochs=4000, lr=
 
 
 def forecast(forecaster, reconstructor, test_dataset):
-    '''Takes model and corresponding test dataset, returns tensor containing the
+    """Forecast using model
+
+    Takes model and corresponding test dataset, returns tensor containing the
     inputs to generate the first forecast and then all subsequent forecasts 
-    throughout the test dataset.'''  # noqa: D205, D209, D300, D401
+    throughout the test dataset.
+    """
     initial_in = test_dataset.X[0:1].clone()
     vals = []
     for i in range(0, test_dataset.X.shape[1]):
