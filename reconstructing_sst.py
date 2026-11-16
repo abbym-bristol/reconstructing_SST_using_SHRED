@@ -30,7 +30,7 @@ from sklearn.preprocessing import StandardScaler
 
 # Local imports
 from helper_functions import models, noaa_data, ofam3_data
-from helper_functions.area_weighting import LatLongGrid, grid_square_areas
+from helper_functions.area_weighting import LatLongGrid, area_weights, infer_resolution
 from helper_functions.pod import qr_place, svd_basis
 from helper_functions.preprocess_data import (
     TimeSeriesDataset,
@@ -63,7 +63,7 @@ def load_dataset(area, dataset):
         data, lats, longs, dates = noaa_data.load_data()
 
         if area != "world":
-            data, lats, longs = noaa_data.crop_to_area(lats, longs, area=area, temps=data)
+            data, lats, longs = noaa_data.crop_to_area(temps=data, lats=lats, longs=longs, area=area)
 
     elif dataset == "OFAM3":
         data, dates, lats, longs = ofam3_data.load_files(file_path=f"Data/OFAM3/{area}/")
@@ -319,13 +319,13 @@ if __name__ == "__main__":
 
     if args.weighted:
         print("Loss function will be area weighted")
-        weights = grid_square_areas(lats, longs)
-        grid = LatLongGrid(lats, args.area)
-        areas = grid.cell_areas
-
-        assert lats == grid.lat_midpoints
-        assert longs == grid.long_midpoints
-        assert weights == areas
+        weights = area_weights(lats, longs)
+        resolution = infer_resolution(lats)
+        grid = LatLongGrid(args.area, resolution)
+        areas = grid.get_area_weights(lats, longs)
+        print(areas)
+        print(weights)
+        assert np.array_equal(weights, areas)
 
         # NOTE: not mean-1 normalised so weighted losses will be on a different scale to the unweighted ones
     else:

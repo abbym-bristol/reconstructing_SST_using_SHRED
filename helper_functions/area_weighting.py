@@ -1,6 +1,7 @@
 """area_weighting.py"""
 
 import numpy as np
+import pandas as pd
 import torch
 from pyproj import Geod
 from shapely.geometry import Polygon
@@ -45,13 +46,32 @@ def grid_square_coords(lat, long, extent):
     return coords
 
 
-def grid_square_areas(lats, longs):
+def grid_square_area(lat, long, resolution):
     """Calculate area of each grid square on the globe
-
+    
     Notes: https://pyproj4.github.io/pyproj/stable/api/geod.html
     - only works with areas up to half the size of the globe ;
     - certain large polygons may return negative values.
     - lats should be in the range [-90 deg, 90 deg]
+
+    Args:
+        lat (float): Latitude corresponding to the center of a grid square
+        long (float): Longitude corresponding to the center of a grid square
+        resolution (float): extent of a grid square
+
+    Returns:
+        area (float): area of grid cell in m^2
+    """
+    corner_coords = grid_square_coords(lat, long, extent=resolution)
+    poly = Polygon(corner_coords)
+    geod = Geod(ellps="WGS84")
+    area_m2, _ = geod.geometry_area_perimeter(poly)
+
+    return area_m2
+
+
+def area_weights(lats, longs):
+    """Calculate area of each grid square specified by lats/longs
 
     Args:
         lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
@@ -61,69 +81,78 @@ def grid_square_areas(lats, longs):
         areas (numpy array): area of each grid cell in m^2, shape (n_cells,)
     """
     resolution = infer_resolution(lats)
-    areas = []
-    for lat, long in zip(lats, longs):
-        coords = grid_square_coords(lat, long, extent=resolution)
-        poly = Polygon(coords)
-        geod = Geod(ellps="WGS84")
-        area_m2, _ = geod.geometry_area_perimeter(poly)
-        areas.append(area_m2)
+    areas = np.array([grid_square_area(lat, long, resolution) for lat, long in zip(lats, longs)])
     
-    areas = np.array(areas)
-
     return areas
 
 
 class LatLongGrid():
     """Lat-long grid and associated cell midpoints, coordinates and areas"""
-    def __init__(self, data_lats, area):
+    def __init__(self, region, resolution):
         """Init
 
         Args:
-            data_lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
+            region (str): Area of ocean to use, choices: "world", "NA", "GS"
+            resolution (float): grid spacing (degrees) of data
         """
-        self.resolution = infer_resolution(data_lats)
-        self.__get_midpoints_grid(area)
-        self.__get_grid_corner_coords()
-        self.__get_grid_cell_areas()
+        self.resolution = resolution
+        self.__get_grid(region)
+        self.__get_area_map()
 
 
-    def __get_midpoints_grid(self, area):
-        """Get grid cell midpoints in Latitude and Longitude"""
-        lat_range = np.arange(-90+self.resolution/2, 90.0, self.resolution)
-        long_range = np.arange(0+self.resolution/2, 360.0, self.resolution)
+    def __get_grid(self, region):
+        """Get grid cell midpoints in Latitude and Longitude
+
+        Args:
+            region (str): Area of ocean to use, choices: "world", "NA", "GS"
+        """
+        if region == "GS":
+            min_lat, max_lat = 30.0, 50.0
+            min_long, max_long = -80.0, -30.0
+        elif region == "NA":
+            min_lat, max_lat = 0.0, 60.0
+            min_long, max_long = -80.0, 0.0
+        elif region == "world":
+            min_lat, max_lat = -90.0, 90.0
+            min_long, max_long = -180.0, 180.0
+        else:
+            ValueError("Area specified is not currently configured.")
+
+        # Produce midpoint grid across area
+        lat_range = np.arange(min_lat+self.resolution/2, max_lat, self.resolution)
+        long_range = np.arange(min_long+self.resolution/2, max_long, self.resolution)
 
         # 2D meshgrid if for lat/lon paired at every grid cell
         lon2d, lat2d = np.meshgrid(long_range, lat_range)  # shape (180, 360) each
         long_midpoints = lon2d.reshape(-1)
-        long_midpoints = np.where(long_midpoints > 180, long_midpoints - 360, long_midpoints)
         lat_midpoints = lat2d.reshape(-1)
 
-        if area != "world":
-            lat_midpoints, long_midpoints = crop_to_area(lats=lat_midpoints, longs=long_midpoints, area=area)
+        # Store grid as a dataframe
+        self.grid = pd.DataFrame({
+            "Latitude (degree)": lat_midpoints,
+            "Longitude (degree)": long_midpoints
+        })
 
-        self.long_midpoints = long_midpoints
-        self.lat_midpoints = lat_midpoints
 
-        print(lat_range)
-        print(long_range)
-
-        
-    def __get_grid_corner_coords(self):
-        """Get coordinates of grid cell corners in Latitude and Longitude"""
-        self.cell_coords = [grid_square_coords(lat=lat, long=long, extent=self.resolution)
-                        for lat, long in zip(self.lat_midpoints, self.long_midpoints)]
-
-    def __get_grid_cell_areas(self):
+    def __get_area_map(self):
         """Get grid cell areas"""
-        areas = []
-        for c in self.cell_coords:
-            poly = Polygon(c)
-            geod = Geod(ellps="WGS84")
-            area_m2, _ = geod.geometry_area_perimeter(poly)
-            areas.append(area_m2)
+        areas = [grid_square_area(row["Latitude (degree)"], row["Latitude (degree)"], self.resolution) for _, row in self.grid.iterrows()]
+        self.grid["Area (m2)"] = areas
+        self.map = self.grid.pivot_table(index="Latitude (degree)", columns="Longitude (degree)", values="Area (m2)")
 
-        self.cell_areas = np.array(areas)
+
+    def get_area_weights(self, lats, longs):
+        """Return area of each grid square specified by lats/longs provided
+    
+        Args:
+            lats (numpy array): array of latitudes corresponding to the center of each grid square for which data is stored
+            longs (numpy array): array of longitudes corresponding to data values for each timestep for which data is stored
+    
+        Returns:
+            areas (numpy array): area of each grid cell in m^2, shape (n_cells,)
+        """
+        areas = np.array([self.map.at[lat, long] for lat, long in zip(lats, longs)])
+        return areas
 
 
 def area_weighted_mean(data, lats, longs):
@@ -138,7 +167,7 @@ def area_weighted_mean(data, lats, longs):
     Returns:
         mean (numpy array): weighted average of data, weighted by the area of each grid square using its latitude and longitude coordinates
     """
-    areas = grid_square_areas(lats, longs)
+    areas = area_weights(lats, longs)
     mean = [np.sum(d * areas)/np.sum(areas) for d in data]
 
     return mean
