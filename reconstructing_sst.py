@@ -299,8 +299,7 @@ if __name__ == "__main__":
     # ---------- Shared set up (identical for every model) ----------
 
     # Load and reformat data
-    path = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
-    directory = os.path.join(args.filepath, path)
+    directory = f"{args.filepath}{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
     print("Saving metadata under: ", directory)
     os.makedirs(directory, exist_ok=True)
 

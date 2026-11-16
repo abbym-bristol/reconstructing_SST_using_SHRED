@@ -41,8 +41,14 @@ def unpack_metadata(metadata_file):
         metadata = json.load(f)
 
     for k, v in metadata.items():
-        if "date" in k:
+        if k == "test_lag_dates":
             metadata[k] = np.array([date.fromisoformat(string) for string in metadata[k]])
+        if k == "dates":
+            metadata[k] = {
+                "train": np.array([date.fromisoformat(string) for string in metadata[k]["train"]]),
+                "val": np.array([date.fromisoformat(string) for string in metadata[k]["val"]]),
+                "test": np.array([date.fromisoformat(string) for string in metadata[k]["test"]]),
+            }
         else:
             metadata[k] = np.array(v)
 
