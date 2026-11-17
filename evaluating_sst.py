@@ -56,8 +56,8 @@ def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, colour_dict, test_
     sst_mean_df = sst_mean_df.set_index(test_indices["label"])
 
     plt.figure()
-    for name, data in sst_mean_df.items():
-        plt.plot(data, c=colour_dict[name], ls='-', label=name)
+    for name in y_pred.keys():
+        plt.plot(sst_mean_df[name], c=colour_dict[name], ls='-', label=name)
     plt.plot(sst_mean_df["Truth"], c=colour_dict["Truth"], ls='--', label="Truth")
     plt.xticks(rotation=90)
     plt.xlabel(test_indices["label"])
@@ -93,7 +93,7 @@ def plot_area_weighted_mean_error(y_true, y_pred, area_weights, colour_dict, tes
     sst_diff_dict = {
         test_indices["label"]: test_indices["values"],
     }
-    for data in mean_diff.values():
+    for name, data in mean_diff.items():
         sst_diff_dict[name] = data
     sst_diff_df = pd.DataFrame(sst_diff_dict)
     sst_diff_df = sst_diff_df.set_index(test_indices["label"])
@@ -126,7 +126,7 @@ def plot_latitude_integrated_mean_error(area, colour_dict, diff_dict):
         None
     """
     avg_all_time_lat_avg_diffs = {}
-    for data in diff_dict.values():
+    for name, data in diff_dict.items():
         # For each reconstruction at a set "date", find the average difference at each latitude
         latitude_avg_diffs = np.array([pd.Series(diff_at_time).groupby(lats).mean().to_numpy() for diff_at_time in data])
 
