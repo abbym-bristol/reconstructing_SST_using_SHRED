@@ -1,6 +1,7 @@
 """evaluating_sst.py"""
 # Standard imports
 import argparse
+import os
 import random
 
 # Third-party imports
@@ -11,9 +12,8 @@ from matplotlib.colors import ListedColormap
 
 # Local imports
 from helper_functions import noaa_data, ofam3_data
-
-# from helper_functions.evaluation import area_weighted_mean, evaluate_metrics
-# from helper_functions.plotting_functions import plot_compare_sst_recon, plot_sst_map
+from helper_functions.area_weighting import area_weighted_mean
+from helper_functions.evaluation import evaluate_metrics
 from helper_functions.saving import unpack_metadata
 from reconstructing_sst import load_dataset
 
@@ -66,8 +66,8 @@ if __name__ == "__main__":
         parser.error(f"Unknown model(s): {', '.join(sorted(unknown))}. Choose from {sorted(VALID_MODELS)}")
 
     # ---------- Load reconstructions ----------
-    path = f"{args.filepath}{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
-    
+    exp_path = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
+    path = os.path.join(args.filepath, exp_path)
     ground_truth = np.load(path+"/truth.npy")
     metadata = unpack_metadata(path+"/metadata.json")
     sensor_locs = metadata["sensor_locations"]
@@ -78,3 +78,39 @@ if __name__ == "__main__":
     test_recons = {}
     for name in args.models:
         test_recons[name] = np.load(f"{path}/{name}/recons.npy")
+
+    # ---------- Metrics ----------
+    print(f"EXPERIMENT: {exp_path}")
+    for name in args.models:
+        evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=weights)
+
+    # ---------- Area-weighted mean SST over time ----------
+    truth_sst_mean = area_weighted_mean(data=ground_truth, area_weights=weights)
+    TEST_INDICES = {
+        "NOAA": {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"},
+        "OFAM3": {"values": test_dates, "label": "Week date"},
+    }
+    sst_mean_dict = {
+        TEST_INDICES[args.dataset]["label"]: TEST_INDICES[args.dataset]["values"],
+        "Truth": truth_sst_mean
+    }
+    for name in args.models:
+        test_sst_mean = area_weighted_mean(data=test_recons[name], area_weights=weights)
+        sst_mean_dict[name] = test_sst_mean
+
+    sst_mean_df = pd.DataFrame(sst_mean_dict)
+    sst_mean_df = sst_mean_df.set_index(TEST_INDICES[args.dataset]["label"])
+
+    plt.figure()
+    for i, name in enumerate(args.models):
+        plt.plot(sst_mean_df[name], c=COLOURS[name], ls='-', label=name)
+    plt.plot(sst_mean_df["Truth"], c=COLOURS["Truth"], ls='--', label="Truth")
+    plt.xticks(rotation=90)
+    plt.xlabel(TEST_INDICES[args.dataset]["label"])
+    plt.ylabel("Area-weighted mean SST ($\\degree$C)")
+    plt.legend(bbox_to_anchor=(1,1))
+    plt.grid()
+    plt.xlim(TEST_INDICES[args.dataset]["values"][0], TEST_INDICES[args.dataset]["values"][-1])
+    plt.savefig(os.path.join(path, "area_weighted_mean_SST.png"),
+                bbox_inches="tight", dpi=300)
+    plt.close()

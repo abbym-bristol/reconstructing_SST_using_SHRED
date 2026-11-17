@@ -69,6 +69,23 @@ def grid_square_area(lat, long, resolution):
     return area_m2
 
 
+def area_weighted_mean(data, area_weights):
+    """Average of data, weighted by area of each grid square on the globe
+
+    Args:
+        data (numpy array): data of shape (timesteps, full-field) which stores a particular value
+            (e.g. SST or OHC) for each grid square of the ME4OH full-field OFAM3 dataset
+        area_weights (numpy array): area weights corresponding to the area of each
+            grid cell (in m^2) of the full-field grid, shape (full-field,)
+
+    Returns:
+        mean (numpy array): weighted average of data, weighted by the area of each grid square
+    """
+    mean = [np.sum(d * area_weights)/np.sum(area_weights) for d in data]
+
+    return mean
+
+
 class LatLongGrid():
     """Lat-long grid and associated cell midpoints, coordinates and areas"""
     def __init__(self, region, resolution):
