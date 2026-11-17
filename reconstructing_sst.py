@@ -241,9 +241,7 @@ def rbfi_reconstructions(test_windows, lats, longs, sensor_coords):
         sensor_coords (numpy array): Latitude and Longitude coordinates corresponding to sensor_locations
 
     Returns:
-        Saves out the reconstructions produced by the model (and the corresponding ground truth)
-        Saves a metadata file for the model, containing
-            test_lag_dates (numpy array): lag dates that correspond with the sequenced test data used
+        rbf_recons (numpy_array): normalised reconstructions, shape (N, m)
     """
     points = np.array([[sensor_coords[0][i], sensor_coords[1][i]] for i in range(len(sensor_coords[0]))])
     full_coords = np.column_stack([longs, lats])

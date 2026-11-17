@@ -8,10 +8,8 @@ import random
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import ListedColormap
 
 # Local imports
-from helper_functions import noaa_data, ofam3_data
 from helper_functions.area_weighting import area_weighted_mean
 from helper_functions.evaluation import evaluate_metrics
 from helper_functions.saving import unpack_metadata
@@ -32,23 +30,34 @@ COLOURS = {"SHRED-LSTM":"#ffb000",
             }
 
 
-def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, test_indices, colour_dict):
-    """Area-weighted mean SST over time"""
+def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, colour_dict, test_indices):
+    """Area-weighted mean SST over time
+    
+    Args:
+        y_true (numpy_array): ground truth data
+        y_pred (dict): keys: model names, values: reconstructions made by model for each item in test set
+        area_weights (numpy_array): area weights corresponding to the predicted full-field shape (y_pred.shape[1]) or None
+        colour_dict (dict): keys: model names, values: colours specified in hexcode
+        test_indices (dict): {"values": test indices to use, "label": x-axis label to use}
+
+    Returns:
+        None
+    """
     truth_sst_mean = area_weighted_mean(data=y_true, area_weights=area_weights)
     sst_mean_dict = {
         test_indices["label"]: test_indices["values"],
         "Truth": truth_sst_mean
     }
-    for name in args.models:
-        test_sst_mean = area_weighted_mean(data=y_pred[name], area_weights=area_weights)
+    for name, data in y_pred.items():
+        test_sst_mean = area_weighted_mean(data=data, area_weights=area_weights)
         sst_mean_dict[name] = test_sst_mean
 
     sst_mean_df = pd.DataFrame(sst_mean_dict)
     sst_mean_df = sst_mean_df.set_index(test_indices["label"])
 
     plt.figure()
-    for name in args.models:
-        plt.plot(sst_mean_df[name], c=colour_dict[name], ls='-', label=name)
+    for name, data in sst_mean_df.items():
+        plt.plot(data, c=colour_dict[name], ls='-', label=name)
     plt.plot(sst_mean_df["Truth"], c=colour_dict["Truth"], ls='--', label="Truth")
     plt.xticks(rotation=90)
     plt.xlabel(test_indices["label"])
@@ -60,12 +69,23 @@ def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, test_indices, colo
     plt.close()
 
 
-def plot_area_weighted_mean_error(y_true, y_pred, area_weights, test_indices, colour_dict):
-    """Area-weighted mean error in SST over time"""
+def plot_area_weighted_mean_error(y_true, y_pred, area_weights, colour_dict, test_indices):
+    """Area-weighted mean error in SST over time
+    
+    Args:
+        y_true (numpy_array): ground truth data
+        y_pred (dict): keys: model names, values: reconstructions made by model for each item in test set
+        area_weights (numpy_array): area weights corresponding to the predicted full-field shape (y_pred.shape[1]) or None
+        colour_dict (dict): keys: model names, values: colours specified in hexcode
+        test_indices (dict): {"values": test indices to use, "label": x-axis label to use}
+
+    Returns:
+        diff_dict (dict): keys: model names, values: difference between y_pred[model name] and y_true
+    """
     diff_dict = {}
     mean_diff = {}
-    for name in args.models:
-        diff = y_pred[name] - y_true  # use experiment ground truth
+    for name, data in y_pred.items():
+        diff = data - y_true
         mean = area_weighted_mean(data=diff, area_weights=area_weights)
         diff_dict[name] = diff
         mean_diff[name] = np.array(mean)
@@ -73,14 +93,14 @@ def plot_area_weighted_mean_error(y_true, y_pred, area_weights, test_indices, co
     sst_diff_dict = {
         test_indices["label"]: test_indices["values"],
     }
-    for name in args.models:
-        sst_diff_dict[name] = mean_diff[name]
+    for data in mean_diff.values():
+        sst_diff_dict[name] = data
     sst_diff_df = pd.DataFrame(sst_diff_dict)
     sst_diff_df = sst_diff_df.set_index(test_indices["label"])
 
     plt.figure(figsize=(8,8))
-    for name in args.models:
-        plt.plot(sst_diff_df[name], c=colour_dict[name], label=name)
+    for name, data in sst_diff_df.items():
+        plt.plot(data, c=colour_dict[name], label=name)
     plt.xticks(rotation=90)
     plt.hlines(0, test_indices["values"][0], test_indices["values"][-1], colors=['k'], linestyles=['--'], label="Truth")
     plt.xlim(test_indices["values"][0], test_indices["values"][-1])
@@ -94,11 +114,21 @@ def plot_area_weighted_mean_error(y_true, y_pred, area_weights, test_indices, co
     return diff_dict
 
 
-def plot_latitude_integrated_mean_error(diff_dict, colour_dict):
+def plot_latitude_integrated_mean_error(area, colour_dict, diff_dict):
+    """Latitude-integrated mean error in SST
+
+    Args:
+        area (str): area of ocean to use
+        colour_dict (dict): keys: model names, values: colours specified in hexcode
+        diff_dict (dict): keys: model names, values: difference between y_pred[model name] and y_true
+
+    Returns:
+        None
+    """
     avg_all_time_lat_avg_diffs = {}
-    for name in args.models:
+    for data in diff_dict.values():
         # For each reconstruction at a set "date", find the average difference at each latitude
-        latitude_avg_diffs = np.array([pd.Series(diff_at_time).groupby(lats).mean().to_numpy() for diff_at_time in diff_dict[name]])
+        latitude_avg_diffs = np.array([pd.Series(diff_at_time).groupby(lats).mean().to_numpy() for diff_at_time in data])
 
         # For each latitude, calculate the mean difference over all time
         avg_all_time_lat_avg_diffs[name] = np.array([np.mean(latitude_avg_diffs.T[j]) for j in range(latitude_avg_diffs.shape[1])])
@@ -107,9 +137,9 @@ def plot_latitude_integrated_mean_error(diff_dict, colour_dict):
     for name, vals in avg_all_time_lat_avg_diffs.items():
         plt.plot(vals, np.unique(lats), c=colour_dict[name], label=name)
     plt.vlines(0, min(lats), max(lats), colors=['k'], linestyles=['--'], label="Truth")
-    if args.area == "world":
+    if area == "world":
         plt.ylim(-90, 90)
-    elif args.area == "NA":
+    elif area == "NA":
         plt.ylim(0, 60)
 
     plt.xlabel('Latitude-integrated mean error ($\\degree$C)')
@@ -184,4 +214,4 @@ if __name__ == "__main__":
                                                test_indices=TEST_INDICES, colour_dict=COLOURS)
 
     # ---------- Latitude-integrated mean error in SST ----------
-    plot_latitude_integrated_mean_error(diff_dict=difference, colour_dict=COLOURS)
+    plot_latitude_integrated_mean_error(diff_dict=difference, colour_dict=COLOURS, area=args.area)
