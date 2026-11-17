@@ -15,7 +15,7 @@ from helper_functions import noaa_data, ofam3_data
 from helper_functions.area_weighting import area_weighted_mean
 from helper_functions.evaluation import evaluate_metrics
 from helper_functions.saving import unpack_metadata
-from reconstructing_sst import load_dataset
+from reconstructing_sst import list_of_strings, load_dataset
 
 np.random.seed(42)
 random.seed(42)
@@ -31,10 +31,31 @@ COLOURS = {"SHRED-LSTM":"#ffb000",
             }
 
 
-# Define a custom argument type for a list of strings
-def list_of_strings(arg):
-    """Split list of strings into a list"""
-    return arg.split(',')
+def plot_area_weighted_mean_SST():
+    truth_sst_mean = area_weighted_mean(data=ground_truth, area_weights=weights)
+    sst_mean_dict = {
+        TEST_INDICES["label"]: TEST_INDICES["values"],
+        "Truth": truth_sst_mean
+    }
+    for name in args.models:
+        test_sst_mean = area_weighted_mean(data=test_recons[name], area_weights=weights)
+        sst_mean_dict[name] = test_sst_mean
+
+    sst_mean_df = pd.DataFrame(sst_mean_dict)
+    sst_mean_df = sst_mean_df.set_index(TEST_INDICES["label"])
+
+    plt.figure()
+    for name in args.models:
+        plt.plot(sst_mean_df[name], c=COLOURS[name], ls='-', label=name)
+    plt.plot(sst_mean_df["Truth"], c=COLOURS["Truth"], ls='--', label="Truth")
+    plt.xticks(rotation=90)
+    plt.xlabel(TEST_INDICES["label"])
+    plt.ylabel("Area-weighted mean SST ($\\degree$C)")
+    plt.legend(bbox_to_anchor=(1,1))
+    plt.grid()
+    plt.xlim(TEST_INDICES["values"][0], TEST_INDICES["values"][-1])
+    plt.savefig(os.path.join(path, "area_weighted_mean_SST.png"), bbox_inches="tight", dpi=300)
+    plt.close()
 
 
 if __name__ == "__main__":
@@ -85,32 +106,67 @@ if __name__ == "__main__":
         evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=weights)
 
     # ---------- Area-weighted mean SST over time ----------
-    truth_sst_mean = area_weighted_mean(data=ground_truth, area_weights=weights)
-    TEST_INDICES = {
-        "NOAA": {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"},
-        "OFAM3": {"values": test_dates, "label": "Week date"},
-    }
-    sst_mean_dict = {
-        TEST_INDICES[args.dataset]["label"]: TEST_INDICES[args.dataset]["values"],
-        "Truth": truth_sst_mean
+    if args.dataset == "NOAA":
+        TEST_INDICES = {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"}
+    elif args.dataset == "OFAM3":
+        TEST_INDICES = {"values": test_dates, "label": "Week date"}
+    # else not needed, because of args restriction
+
+    plot_area_weighted_mean_SST()
+
+    # ---------- Area-weighted mean error in SST over time ----------
+    difference = {}
+    mean_diff = {}
+    for name in args.models:
+        diff = test_recons[name] - ground_truth  # use experiment ground truth
+        mean = area_weighted_mean(data=diff, area_weights=weights)
+        difference[name] = diff
+        mean_diff[name] = np.array(mean)
+
+    sst_diff_dict = {
+        TEST_INDICES["label"]: TEST_INDICES["values"],
     }
     for name in args.models:
-        test_sst_mean = area_weighted_mean(data=test_recons[name], area_weights=weights)
-        sst_mean_dict[name] = test_sst_mean
+        sst_diff_dict[name] = mean_diff[name]
+    sst_diff_df = pd.DataFrame(sst_diff_dict)
+    sst_diff_df = sst_diff_df.set_index(TEST_INDICES["label"])
 
-    sst_mean_df = pd.DataFrame(sst_mean_dict)
-    sst_mean_df = sst_mean_df.set_index(TEST_INDICES[args.dataset]["label"])
-
-    plt.figure()
-    for i, name in enumerate(args.models):
-        plt.plot(sst_mean_df[name], c=COLOURS[name], ls='-', label=name)
-    plt.plot(sst_mean_df["Truth"], c=COLOURS["Truth"], ls='--', label="Truth")
+    plt.figure(figsize=(8,8))
+    for name in args.models:
+        plt.plot(sst_diff_df[name], c=COLOURS[name], label=name)
     plt.xticks(rotation=90)
-    plt.xlabel(TEST_INDICES[args.dataset]["label"])
-    plt.ylabel("Area-weighted mean SST ($\\degree$C)")
-    plt.legend(bbox_to_anchor=(1,1))
+    plt.hlines(0, TEST_INDICES["values"][0], TEST_INDICES["values"][-1], colors=['k'], linestyles=['--'], label="Truth")
+    plt.xlim(TEST_INDICES["values"][0], TEST_INDICES["values"][-1])
+    plt.ylabel("Area-weighted mean error ($\\degree$C)")
+    plt.xlabel(TEST_INDICES["label"])
     plt.grid()
-    plt.xlim(TEST_INDICES[args.dataset]["values"][0], TEST_INDICES[args.dataset]["values"][-1])
-    plt.savefig(os.path.join(path, "area_weighted_mean_SST.png"),
-                bbox_inches="tight", dpi=300)
+    plt.legend(bbox_to_anchor=(1,1))
+    plt.savefig(os.path.join(path, "area_weighted_mean_error.png"), bbox_inches="tight", dpi=300)
+    plt.close()
+
+    # ---------- Latitude-integrated mean error in SST ----------
+    _, lats, _, _ = load_dataset(args.area, args.dataset)
+
+    avg_all_time_lat_avg_diffs = {}
+    for name in args.models:
+        # For each reconstruction at a set "date", find the average difference at each latitude
+        latitude_avg_diffs = np.array([pd.Series(diff_at_time).groupby(lats).mean().to_numpy() for diff_at_time in difference[name]])
+
+        # For each latitude, calculate the mean difference over all time
+        avg_all_time_lat_avg_diffs[name] = np.array([np.mean(latitude_avg_diffs.T[j]) for j in range(latitude_avg_diffs.shape[1])])
+
+    plt.figure(figsize=(8,8))
+    for name, vals in avg_all_time_lat_avg_diffs.items():
+        plt.plot(vals, np.unique(lats), c=COLOURS[name], label=name)
+    plt.vlines(0, min(lats), max(lats), colors=['k'], linestyles=['--'], label="Truth")
+    if args.area == "world":
+        plt.ylim(-90, 90)
+    elif args.area == "NA":
+        plt.ylim(0, 60)
+
+    plt.xlabel('Latitude-integrated mean error ($\\degree$C)')
+    plt.ylabel('Latitude')
+    plt.grid()
+    plt.legend(loc="best")
+    plt.savefig(os.path.join(path, "lat_int_mean_error.png"), bbox_inches="tight", dpi=300)
     plt.close()
