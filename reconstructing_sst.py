@@ -40,9 +40,8 @@ from helper_functions.preprocess_data import (
 from helper_functions.saving import JsonEncoder
 from helper_functions.windows import build_windows
 
-np.random.seed(42)
-random.seed(42)
-torch.manual_seed(42)
+SEEDS = [1001, 1002, 1003, 1004, 1006, 2200, 2222, 3345, 23, 42]
+VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
 
 #-------------------- SET UP --------------------#
 
@@ -285,82 +284,89 @@ if __name__ == "__main__":
     parser.add_argument("-l", "--lags", help="Lags (sequence length in weeks)", default=52, type=int)
     parser.add_argument("-r", "--area", help="Area of ocean to use", default="NA", choices=["world", "NA", "GS"])
     parser.add_argument("-p", "--sensor_placement", help="Type of sensor placement to use; choices are random or QR", choices=["random", "QR"], default="random")
+    parser.add_argument("-s", "--seeds", nargs="+", type=int, default=SEEDS, help="List of seeds to run; if a single seed is given, it's used for all runs")
     
 
     args = parser.parse_args()
 
-    VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
     unknown = set(args.models) - VALID_MODELS
     if unknown:
         parser.error(f"Unknown model(s): {', '.join(sorted(unknown))}. Choose from {sorted(VALID_MODELS)}")
 
     # ---------- Shared set up (identical for every model) ----------
-
-    # Load and reformat data
-    directory = f"{args.filepath}{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
-    print("Saving metadata under: ", directory)
-    os.makedirs(directory, exist_ok=True)
-
     data, lats, longs, dates = load_dataset(args.area, args.dataset)
-    pp_data, dates_dict, norm_model, sensor_locations, sensor_coords, U_r, bulk_mean = preprocess_data(
-        anomaly=args.anomaly, data=data, dates=dates, lats=lats, longs=longs,
-        num_sensors=args.num_sensors, sensor_placement=args.sensor_placement)
+    base_dir = f"{args.filepath}{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
 
-     # One set of windows for every split; every model takes a view of these
-    windows = {split: build_windows(pp_data[split], dates_dict[split], sensor_locations, args.lags)
-               for split in ("train", "val", "test")}
- 
-    # Ground truth is computed and saved once, so it cannot differ between models
-    test_ground_truth = norm_model.inverse_transform(windows["test"]["truth"])
-    np.save(f"{directory}/truth", test_ground_truth)
+    # When setting random seeds, use the current seed for this run
+    for seed in args.seeds:
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
 
-    if args.weighted:
-        print("Loss function will be area weighted")
-        resolution = infer_resolution(lats)
-        grid = LatLongGrid(args.area, resolution)
-        weights = grid.get_area_weights(lats, longs)
-        # NOTE: not mean-1 normalised so weighted losses will be on a different scale to the unweighted ones
-    else:
-        weights = None
- 
-    metadata = {
-        "sensor_locations": list(sensor_locations),
-        "sensor_coords": list(sensor_coords),
-        "dates": dates_dict,
-        "test_lag_dates": windows["test"]["dates"],
-        "weights": weights
-    }
-    if bulk_mean is not None:
-        metadata["bulk_mean"] = bulk_mean
-    with open(f"{directory}/metadata.json", 'w', encoding='utf-8') as f:
-        json.dump(metadata, f, cls=JsonEncoder)
- 
-    num_points = len(lats)
+        # Load and reformat data
+        directory = os.path.join(base_dir, f"seed_{seed}")
+        print("Saving metadata under: ", directory)
+        os.makedirs(directory, exist_ok=True)
 
-    # ---------- Model reconstructions ----------
-    for model_type in args.models:
-        # Storage
-        model_directory = os.path.join(directory, model_type)
-        print("Saving results under: ", model_directory)
-        os.makedirs(model_directory, exist_ok=True)
+        pp_data, dates_dict, norm_model, sensor_locations, sensor_coords, U_r, bulk_mean = preprocess_data(
+            anomaly=args.anomaly, data=data, dates=dates, lats=lats, longs=longs,
+            num_sensors=args.num_sensors, sensor_placement=args.sensor_placement)
 
-        # Build sequences
-        if model_type in ["SHRED-LSTM", "SHRED-GRU", "SDN"]:
-            recons_norm = shred_sdn_reconstructions(windows, hidden_dim=args.hidden_dim, model_type=model_type,
-                                                    num_sensors=args.num_sensors, num_points=num_points, weights=weights)
-        elif model_type == "POD":
-            recons_norm = pod_reconstructions(windows["test"], num_sensors=args.num_sensors, sensor_locations=sensor_locations,
-                                              sensor_placement=args.sensor_placement, U_r=U_r)
-        elif model_type == "RBFI":
-            recons_norm = rbfi_reconstructions(windows["test"], lats=lats, longs=longs, sensor_coords=sensor_coords)
+        # One set of windows for every split; every model takes a view of these
+        windows = {split: build_windows(pp_data[split], dates_dict[split], sensor_locations, args.lags)
+                for split in ("train", "val", "test")}
+    
+        # Ground truth is computed and saved once, so it cannot differ between models
+        test_ground_truth = norm_model.inverse_transform(windows["test"]["truth"])
+        np.save(f"{directory}/truth", test_ground_truth)
+
+        if args.weighted:
+            print("Loss function will be area weighted")
+            resolution = infer_resolution(lats)
+            grid = LatLongGrid(args.area, resolution)
+            weights = grid.get_area_weights(lats, longs)
+            # NOTE: not mean-1 normalised so weighted losses will be on a different scale to the unweighted ones
         else:
-            raise ValueError(f"Unknown model type: {model_type}")
+            weights = None
+    
+        metadata = {
+            "sensor_locations": list(sensor_locations),
+            "sensor_coords": list(sensor_coords),
+            "dates": dates_dict,
+            "test_lag_dates": windows["test"]["dates"],
+            "weights": weights
+        }
+        if bulk_mean is not None:
+            metadata["bulk_mean"] = bulk_mean
+        with open(f"{directory}/metadata.json", 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, cls=JsonEncoder)
+    
+        num_points = len(lats)
 
-        test_recons = norm_model.inverse_transform(recons_norm)
-        np.save(f"{model_directory}/recons", test_recons)
+        # ---------- Model reconstructions ----------
+        for model_type in args.models:
+            # Storage
+            model_directory = os.path.join(directory, model_type)
+            print("Saving results under: ", model_directory)
+            os.makedirs(model_directory, exist_ok=True)
 
-        rel_err = np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth)
-        print(f"{model_type} test relative reconstruction error: {rel_err:.4f}")
+            # Build sequences
+            if model_type in ["SHRED-LSTM", "SHRED-GRU", "SDN"]:
+                recons_norm = shred_sdn_reconstructions(windows, hidden_dim=args.hidden_dim, model_type=model_type,
+                                                        num_sensors=args.num_sensors, num_points=num_points, weights=weights)
+            elif model_type == "POD":
+                recons_norm = pod_reconstructions(windows["test"], num_sensors=args.num_sensors, sensor_locations=sensor_locations,
+                                                sensor_placement=args.sensor_placement, U_r=U_r)
+            elif model_type == "RBFI":
+                recons_norm = rbfi_reconstructions(windows["test"], lats=lats, longs=longs, sensor_coords=sensor_coords)
+            else:
+                raise ValueError(f"Unknown model type: {model_type}")
+
+            test_recons = norm_model.inverse_transform(recons_norm)
+            np.save(f"{model_directory}/recons", test_recons)
+
+            rel_err = np.linalg.norm(test_recons - test_ground_truth) / np.linalg.norm(test_ground_truth)
+            print(f"{model_type} test relative reconstruction error: {rel_err:.4f}")
 
 """
 References:
