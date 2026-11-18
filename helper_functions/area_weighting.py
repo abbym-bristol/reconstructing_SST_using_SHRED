@@ -184,6 +184,3 @@ class AreaWeightedMSELoss(torch.nn.Module):
             Area Weighted MSE Loss
         """
         return (((inputs - targets)**2 ) * self.weights).mean()
-
-
-# TODO: Update area-weighting code for evaluation plots to use this scripts functions
