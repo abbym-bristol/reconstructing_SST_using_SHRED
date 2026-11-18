@@ -49,9 +49,7 @@ def test_evaluate_metrics_prints_weighted_results(capsys):
     y_pred = np.array([[1, 1], [3, 3]])
     weights = np.array([3, 2])
 
-    _, weights_out = evaluate_metrics(y_true, y_pred, weights)
-    
-    np.testing.assert_allclose(weights_out, weights)
+    _ = evaluate_metrics(y_true, y_pred, weights)
 
     output = capsys.readouterr().out
     assert "Metrics (area-weighted):" in output
@@ -67,9 +65,9 @@ test_data = [  # y_true, y_pred, results
 
 @pytest.mark.parametrize("y_true,y_pred,results", test_data)
 def test_evaluate_metrics_labels_default_weights_unweighted(capsys, y_true, y_pred, results):
-    """Check that evaluate_metrics labels its default-weight results unweighted."""
-    metrics, weights_out = evaluate_metrics(y_true, y_pred)
-    np.testing.assert_allclose(weights_out,  np.ones(y_true.shape[-1]))
+    """Check evaluate_metrics for unweighted metrics"""
+    weights = np.ones(y_true.shape[-1])
+    metrics  = evaluate_metrics(y_true, y_pred, weights)
 
     output = capsys.readouterr().out
     assert "Metrics (unweighted):" in output

@@ -44,6 +44,8 @@ np.random.seed(42)
 random.seed(42)
 torch.manual_seed(42)
 
+VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
+
 #-------------------- SET UP --------------------#
 
 def load_dataset(area, dataset):
@@ -289,7 +291,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
     unknown = set(args.models) - VALID_MODELS
     if unknown:
         parser.error(f"Unknown model(s): {', '.join(sorted(unknown))}. Choose from {sorted(VALID_MODELS)}")
