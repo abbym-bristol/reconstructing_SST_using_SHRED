@@ -111,7 +111,7 @@ if __name__ == "__main__":
             test_recons[name] = np.load(f"{path}/{name}/recons.npy")
 
         if args.dataset == "NOAA":
-                TEST_INDICES = {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"}
+            TEST_INDICES = {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"}
         elif args.dataset == "OFAM3":
             TEST_INDICES = {"values": test_dates, "label": "Week date"}
         # else not needed, because of args restriction
