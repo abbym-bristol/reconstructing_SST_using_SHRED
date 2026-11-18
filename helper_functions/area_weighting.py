@@ -6,8 +6,6 @@ import torch
 from pyproj import Geod
 from shapely.geometry import Polygon
 
-from helper_functions.noaa_data import crop_to_area
-
 
 def infer_resolution(lats):
     """Infers resolution of data
