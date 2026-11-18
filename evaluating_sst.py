@@ -10,8 +10,13 @@ import numpy as np
 import pandas as pd
 
 # Local imports
-from helper_functions.area_weighting import area_weighted_mean
-from helper_functions.evaluation import evaluate_metrics
+from helper_functions.area_weighting import LatLongGrid, infer_resolution
+from helper_functions.evaluation import (
+    evaluate_metrics,
+    plot_area_weighted_mean_error,
+    plot_area_weighted_mean_SST,
+    plot_latitude_integrated_mean_error,
+)
 from helper_functions.saving import unpack_metadata
 from reconstructing_sst import list_of_strings, load_dataset
 
@@ -21,134 +26,41 @@ random.seed(42)
 plt.rcParams.update({'font.size': 16})
 
 # Global variable
-COLOURS = {"SHRED-LSTM":"#ffb000",
-           "SHRED-GRU": "#dc267f",
-           "SDN": "#1589e8",
-           "POD": "#631ff3",
-           "RBFI": "#fe5100",
-            "Truth": "#000000"
-            }
+VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
 
 
-def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, colour_dict, test_indices):
-    """Area-weighted mean SST over time
+def metric_weighting(weights, arg_weighting):
+    """Configure weighting for metrics
+
+    Optional to evaluate metrics using area-weighting. 
+        - If desired, arg_weighted will be True
+        - But training may not have used weights, if not they won't be in meta data and will need to be configured
+
+    Args:
+        weights (numpy array): Area weights used in training,
+            either corresponding to the predicted full-field shape or NONE
+        arg_weighting (bool): Whether to use area-weighting for metrics
     
-    Args:
-        y_true (numpy_array): ground truth data
-        y_pred (dict): keys: model names, values: reconstructions made by model for each item in test set
-        area_weights (numpy_array): area weights corresponding to the predicted full-field shape (y_pred.shape[1]) or None
-        colour_dict (dict): keys: model names, values: colours specified in hexcode
-        test_indices (dict): {"values": test indices to use, "label": x-axis label to use}
-
     Returns:
-        None
+        metrics_weights (numpy array): metric weights either using areas or all ones
     """
-    truth_sst_mean = area_weighted_mean(data=y_true, area_weights=area_weights)
-    sst_mean_dict = {
-        test_indices["label"]: test_indices["values"],
-        "Truth": truth_sst_mean
-    }
-    for name, data in y_pred.items():
-        test_sst_mean = area_weighted_mean(data=data, area_weights=area_weights)
-        sst_mean_dict[name] = test_sst_mean
+    if weights is not None and arg_weighting:
+        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
+        metric_weights = weights
+    elif weights is not None and not arg_weighting:
+        # Case where area-weighting was used for training AND we don't want to do area-weighted metrics
+        metric_weights = np.ones(ground_truth.shape[-1])
+    elif weights is None and arg_weighting:
+        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
+        resolution = infer_resolution(lats)
+        grid = LatLongGrid(args.area, resolution)
+        metric_weights = grid.get_area_weights(lats, longs)
+    else:
+        # weights is None and not arg_weighting:
+        # Case where area-weighting wasn't used for training AND we don't want to do weighted metrics
+        metric_weights = np.ones(ground_truth.shape[-1])
 
-    sst_mean_df = pd.DataFrame(sst_mean_dict)
-    sst_mean_df = sst_mean_df.set_index(test_indices["label"])
-
-    plt.figure()
-    for name in y_pred.keys():
-        plt.plot(sst_mean_df[name], c=colour_dict[name], ls='-', label=name)
-    plt.plot(sst_mean_df["Truth"], c=colour_dict["Truth"], ls='--', label="Truth")
-    plt.xticks(rotation=90)
-    plt.xlabel(test_indices["label"])
-    plt.ylabel("Area-weighted mean SST ($\\degree$C)")
-    plt.legend(bbox_to_anchor=(1,1))
-    plt.grid()
-    plt.xlim(test_indices["values"][0], test_indices["values"][-1])
-    plt.savefig(os.path.join(path, "area_weighted_mean_SST.png"), bbox_inches="tight", dpi=300)
-    plt.close()
-
-
-def plot_area_weighted_mean_error(y_true, y_pred, area_weights, colour_dict, test_indices):
-    """Area-weighted mean error in SST over time
-    
-    Args:
-        y_true (numpy_array): ground truth data
-        y_pred (dict): keys: model names, values: reconstructions made by model for each item in test set
-        area_weights (numpy_array): area weights corresponding to the predicted full-field shape (y_pred.shape[1]) or None
-        colour_dict (dict): keys: model names, values: colours specified in hexcode
-        test_indices (dict): {"values": test indices to use, "label": x-axis label to use}
-
-    Returns:
-        diff_dict (dict): keys: model names, values: difference between y_pred[model name] and y_true
-    """
-    diff_dict = {}
-    mean_diff = {}
-    for name, data in y_pred.items():
-        diff = data - y_true
-        mean = area_weighted_mean(data=diff, area_weights=area_weights)
-        diff_dict[name] = diff
-        mean_diff[name] = np.array(mean)
-
-    sst_diff_dict = {
-        test_indices["label"]: test_indices["values"],
-    }
-    for name, data in mean_diff.items():
-        sst_diff_dict[name] = data
-    sst_diff_df = pd.DataFrame(sst_diff_dict)
-    sst_diff_df = sst_diff_df.set_index(test_indices["label"])
-
-    plt.figure(figsize=(8,8))
-    for name, data in sst_diff_df.items():
-        plt.plot(data, c=colour_dict[name], label=name)
-    plt.xticks(rotation=90)
-    plt.hlines(0, test_indices["values"][0], test_indices["values"][-1], colors=['k'], linestyles=['--'], label="Truth")
-    plt.xlim(test_indices["values"][0], test_indices["values"][-1])
-    plt.ylabel("Area-weighted mean error ($\\degree$C)")
-    plt.xlabel(test_indices["label"])
-    plt.grid()
-    plt.legend(bbox_to_anchor=(1,1))
-    plt.savefig(os.path.join(path, "area_weighted_mean_error.png"), bbox_inches="tight", dpi=300)
-    plt.close()
-
-    return diff_dict
-
-
-def plot_latitude_integrated_mean_error(area, colour_dict, diff_dict):
-    """Latitude-integrated mean error in SST
-
-    Args:
-        area (str): area of ocean to use
-        colour_dict (dict): keys: model names, values: colours specified in hexcode
-        diff_dict (dict): keys: model names, values: difference between y_pred[model name] and y_true
-
-    Returns:
-        None
-    """
-    avg_all_time_lat_avg_diffs = {}
-    for name, data in diff_dict.items():
-        # For each reconstruction at a set "date", find the average difference at each latitude
-        latitude_avg_diffs = np.array([pd.Series(diff_at_time).groupby(lats).mean().to_numpy() for diff_at_time in data])
-
-        # For each latitude, calculate the mean difference over all time
-        avg_all_time_lat_avg_diffs[name] = np.array([np.mean(latitude_avg_diffs.T[j]) for j in range(latitude_avg_diffs.shape[1])])
-
-    plt.figure(figsize=(8,8))
-    for name, vals in avg_all_time_lat_avg_diffs.items():
-        plt.plot(vals, np.unique(lats), c=colour_dict[name], label=name)
-    plt.vlines(0, min(lats), max(lats), colors=['k'], linestyles=['--'], label="Truth")
-    if area == "world":
-        plt.ylim(-90, 90)
-    elif area == "NA":
-        plt.ylim(0, 60)
-
-    plt.xlabel('Latitude-integrated mean error ($\\degree$C)')
-    plt.ylabel('Latitude')
-    plt.grid()
-    plt.legend(loc="best")
-    plt.savefig(os.path.join(path, "lat_int_mean_error.png"), bbox_inches="tight", dpi=300)
-    plt.close()
-
+    return metric_weights
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -160,7 +72,7 @@ if __name__ == "__main__":
 
     # Optional - Bool flags
     parser.add_argument("-a", "--anomaly", action="store_true", help="Use anomalies to train if this flag is used")
-    parser.add_argument("-w", "--weighted", action="store_true", help="Use area weighted loss functions in training if this flag is used")
+    parser.add_argument("-w", "--weighted", action="store_true", help="Use area weighted metrics in evaluation if this flag is used")
 
     # Optional - defaults set
     parser.add_argument("-f", "--filepath", help="File path to save results under",
@@ -173,13 +85,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
     unknown = set(args.models) - VALID_MODELS
     if unknown:
         parser.error(f"Unknown model(s): {', '.join(sorted(unknown))}. Choose from {sorted(VALID_MODELS)}")
 
     # ---------- Load reconstructions ----------
-    _, lats, _, _ = load_dataset(args.area, args.dataset)
+    _, lats, longs, _ = load_dataset(args.area, args.dataset)
 
     exp_path = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
     path = os.path.join(args.filepath, exp_path)
@@ -201,17 +112,27 @@ if __name__ == "__main__":
     # else not needed, because of args restriction
 
     # ---------- Metrics ----------
+    metric_weights = metric_weighting(weights, args.weighted)
     print(f"EXPERIMENT: {exp_path}")
     for name in args.models:
-        evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=weights)
+        evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
 
+    # ---------- Area-weighted evaluations ----------
+    # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
+    if weights is not None:
+        graph_weights = weights
+    else:
+        resolution = infer_resolution(lats)
+        grid = LatLongGrid(args.area, resolution)
+        graph_weights = grid.get_area_weights(lats, longs)
+    
     # ---------- Area-weighted mean SST over time ----------
-    plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=weights,
-                                test_indices=TEST_INDICES, colour_dict=COLOURS)
+    plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+                                save_path=path, test_indices=TEST_INDICES)
 
     # ---------- Area-weighted mean error in SST over time ----------
-    difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=weights,
-                                               test_indices=TEST_INDICES, colour_dict=COLOURS)
+    difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+                                               save_path=path, test_indices=TEST_INDICES)
 
     # ---------- Latitude-integrated mean error in SST ----------
-    plot_latitude_integrated_mean_error(diff_dict=difference, colour_dict=COLOURS, area=args.area)
+    plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
