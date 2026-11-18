@@ -7,7 +7,6 @@ import pandas as pd
 
 from helper_functions.area_weighting import area_weighted_mean
 
-
 COLOURS = {"SHRED-LSTM":"#ffb000",
            "SHRED-GRU": "#dc267f",
            "SDN": "#1589e8",
@@ -67,42 +66,45 @@ def weighted_r2(y_true, y_pred, weights):
         See evaluate_metrics
 
     Returns:
-        (float): mean R2 value across all weeks in y_pred
+        np.mean(r2_by_week) (float): mean R2 value across all weeks in y_pred
+        np.mean(var_by_week) (numpy array): mean variance across all weeks in y_pred
     """
     _, mse_by_week = weighted_mse(y_true, y_pred, weights)
     y_bar = np.sum(weights * y_true, axis=1) / np.sum(weights)
     var_by_week = np.sum((y_true - y_bar[:, None])**2 * weights, axis = 1) / np.sum(weights)
     r2_by_week = 1 - mse_by_week/var_by_week
-    return np.mean(r2_by_week)  # mean at the end to treat every week equally
+    # mean at the end to treat every week equally
+    return np.mean(r2_by_week), np.mean(var_by_week)
 
 
-def evaluate_metrics(y_true, y_pred, weights=None):
+def evaluate_metrics(y_true, y_pred, weights):
     """Calculate metrics from test reconstructions
 
     Args:
         y_true (numpy array): corresponding true y (full-field) for each sequence (week) in test set
         y_pred (numpy array): predicted y (full-field) for each sequence (week) in test set
-        weights (numpy array, optional): Area weights corresponding to the predicted full-field shape (y_pred.shape[1]) or None
+        weights (numpy array): Area weights corresponding to the predicted full-field shape (y_pred.shape[1])
 
     Returns:
         None
     """
-    label = "unweighted" if weights is None else "area-weighted"
-    if weights is None:
-        weights = np.ones(y_true.shape[-1])
+    # Check if all weights are 1
+    label = "unweighted" if np.all(weights == 1) else "area-weighted"
 
     mse, _ = weighted_mse(y_true, y_pred, weights)
+    r2, var = weighted_r2(y_true, y_pred, weights)
     metrics = {
         "MAE": weighted_mae(y_true, y_pred, weights),
         "MSE": mse,
-        "R2": weighted_r2(y_true, y_pred, weights)
+        "R2": r2,
+        "variance": var
     }
 
     print(f"Metrics ({label}):")
     for k,v in metrics.items():
         print(f"{k}:\t{v:.3f}")
 
-    return metrics, weights
+    return metrics
 
 
 def mask_array_by_lat_long(array, lats, longs, area="GS"):

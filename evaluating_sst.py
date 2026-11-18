@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Local imports
+from helper_functions.area_weighting import LatLongGrid, infer_resolution
 from helper_functions.evaluation import (
     evaluate_metrics,
     plot_area_weighted_mean_error,
@@ -38,7 +39,7 @@ if __name__ == "__main__":
 
     # Optional - Bool flags
     parser.add_argument("-a", "--anomaly", action="store_true", help="Use anomalies to train if this flag is used")
-    parser.add_argument("-w", "--weighted", action="store_true", help="Use area weighted loss functions in training if this flag is used")
+    parser.add_argument("-w", "--weighted", action="store_true", help="Use area weighted metrics in evaluation if this flag is used")
 
     # Optional - defaults set
     parser.add_argument("-f", "--filepath", help="File path to save results under",
@@ -57,20 +58,21 @@ if __name__ == "__main__":
         parser.error(f"Unknown model(s): {', '.join(sorted(unknown))}. Choose from {sorted(VALID_MODELS)}")
 
     # ---------- Load reconstructions ----------
-    _, lats, _, _ = load_dataset(args.area, args.dataset)
+    _, lats, longs, _ = load_dataset(args.area, args.dataset)
 
     base_dir = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
     base_path = os.path.join(args.filepath, base_dir)
 
     for seed in args.seeds:
         path = os.path.join(base_path, f"seed_{seed}")
-        ground_truth = np.load(path+"/truth.npy")
+        ground_truth = np.load(path+"/truth.npy")  # y_true is the same for all models
         metadata = unpack_metadata(path+"/metadata.json")
         sensor_locs = metadata["sensor_locations"]
         sensor_coords = metadata["sensor_coords"]
         test_dates = metadata["test_lag_dates"]
         weights = metadata["weights"]
 
+        # Load reconstructions (y_pred)
         test_recons = {}
         for name in args.models:
             test_recons[name] = np.load(f"{path}/{name}/recons.npy")
@@ -82,18 +84,43 @@ if __name__ == "__main__":
         # else not needed, because of args restriction
 
         # ---------- Metrics ----------
-        # Evaluate this seed's results
+        # Optional: evaluate metrics using area-weighting. If desired, args.weighted will be True
+        if weights is not None and args.weighted:
+            # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
+            metrics_weights = weights
+        elif weights is not None and not args.weighted:
+            # Case where area-weighting was used for training AND we don't want to do area-weighted metrics
+            metrics_weights = np.ones(ground_truth.shape[-1])
+        elif weights is None and args.weighted:
+            # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
+            resolution = infer_resolution(lats)
+            grid = LatLongGrid(args.area, resolution)
+            metrics_weights = grid.get_area_weights(lats, longs)
+        else:
+            # weights is None and not args.weighted:
+            # Case where area-weighting wasn't used for training AND we don't want to do weighted metrics
+            metrics_weights = np.ones(ground_truth.shape[-1])
+
         print(f"EXPERIMENT (seed={seed}): {path}")
         for name in args.models:
             print(f"MODEL: {name}")
-            evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=weights)
+            metrics = evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metrics_weights)
+
+        # ---------- Area-weighted evaluations ----------
+        # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
+        if weights is not None:
+            graph_weights = weights
+        else:
+            resolution = infer_resolution(lats)
+            grid = LatLongGrid(args.area, resolution)
+            graph_weights = grid.get_area_weights(lats, longs)
 
         # ---------- Area-weighted mean SST over time ----------
-        plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=weights,
+        plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
                                     save_path=path, test_indices=TEST_INDICES)
 
         # ---------- Area-weighted mean error in SST over time ----------
-        difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=weights,
+        difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
                                                    save_path=path, test_indices=TEST_INDICES)
 
         # ---------- Latitude-integrated mean error in SST ----------
