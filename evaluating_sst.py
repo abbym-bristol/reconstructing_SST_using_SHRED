@@ -12,6 +12,7 @@ import numpy as np
 from helper_functions.area_weighting import LatLongGrid, infer_resolution
 from helper_functions.evaluation import (
     evaluate_metrics,
+    metric_weighting,
     plot_area_weighted_mean_error,
     plot_area_weighted_mean_SST,
     plot_latitude_integrated_mean_error,
@@ -19,47 +20,11 @@ from helper_functions.evaluation import (
 from helper_functions.saving import unpack_metadata
 from reconstructing_sst import list_of_strings, load_dataset
 
-np.random.seed(42)
-random.seed(42)
-
 plt.rcParams.update({'font.size': 16})
 
 # Global variables
 SEEDS = [1001, 1002, 1003, 1004, 1006, 2200, 2222, 3345, 23, 42]
 VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
-
-def metric_weighting(weights, arg_weighting):
-    """Configure weighting for metrics
-
-    Optional to evaluate metrics using area-weighting. 
-        - If desired, arg_weighted will be True
-        - But training may not have used weights, if not they won't be in meta data and will need to be configured
-
-    Args:
-        weights (numpy array): Area weights used in training,
-            either corresponding to the predicted full-field shape or NONE
-        arg_weighting (bool): Whether to use area-weighting for metrics
-    
-    Returns:
-        metrics_weights (numpy array): metric weights either using areas or all ones
-    """
-    if weights is not None and arg_weighting:
-        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
-        metric_weights = weights
-    elif weights is not None and not arg_weighting:
-        # Case where area-weighting was used for training AND we don't want to do area-weighted metrics
-        metric_weights = np.ones(ground_truth.shape[-1])
-    elif weights is None and arg_weighting:
-        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
-        resolution = infer_resolution(lats)
-        grid = LatLongGrid(args.area, resolution)
-        metric_weights = grid.get_area_weights(lats, longs)
-    else:
-        # weights is None and not arg_weighting:
-        # Case where area-weighting wasn't used for training AND we don't want to do weighted metrics
-        metric_weights = np.ones(ground_truth.shape[-1])
-
-    return metric_weights
 
 
 if __name__ == "__main__":
@@ -96,6 +61,7 @@ if __name__ == "__main__":
     base_dir = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
     base_path = os.path.join(args.filepath, base_dir)
 
+    seed_variance_results = {}
     for seed in args.seeds:
         path = os.path.join(base_path, f"seed_{seed}")
         ground_truth = np.load(path+"/truth.npy")  # y_true is the same for all models
@@ -117,12 +83,14 @@ if __name__ == "__main__":
         # else not needed, because of args restriction
 
         # ---------- Metrics ----------
-        metric_weights = metric_weighting(weights, args.weighted)
+        model_seed_var = {}
+        metric_weights = metric_weighting(weights, args.weighted, ground_truth, lats, longs)
         print(f"EXPERIMENT (seed={seed}): {path}")
         for name in args.models:
             print(f"MODEL: {name}")
             metrics = evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
-
+            model_seed_var[name] = metrics["variance"]
+        seed_variance_results[seed] = model_seed_var
         # ---------- Area-weighted evaluations ----------
         # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
         if weights is not None:
@@ -142,3 +110,5 @@ if __name__ == "__main__":
 
         # ---------- Latitude-integrated mean error in SST ----------
         plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
+
+    print(seed_variance_results)

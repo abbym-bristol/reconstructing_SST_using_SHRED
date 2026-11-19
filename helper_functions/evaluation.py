@@ -5,7 +5,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from helper_functions.area_weighting import area_weighted_mean
+from helper_functions.area_weighting import (
+    LatLongGrid,
+    area_weighted_mean,
+    infer_resolution,
+)
 
 COLOURS = {"SHRED-LSTM":"#ffb000",
            "SHRED-GRU": "#dc267f",
@@ -264,3 +268,42 @@ def plot_latitude_integrated_mean_error(area, diff_dict, lats, save_path, colour
     plt.legend(loc="best")
     plt.savefig(os.path.join(save_path, "lat_int_mean_error.png"), bbox_inches="tight", dpi=300)
     plt.close()
+
+
+# ---------- evaluating_sst.py specific helper ----------
+
+def metric_weighting(weights, arg_weighting, ground_truth, lats, longs):
+    """Configure weighting for metrics
+
+    Optional to evaluate metrics using area-weighting. 
+        - If desired, arg_weighted will be True
+        - But training may not have used weights, if not they won't be in meta data and will need to be configured
+
+    Args:
+        weights (numpy array): area weights used in training,
+            either corresponding to the predicted full-field shape or NONE
+        arg_weighting (bool): whether to use area-weighting for metrics
+        ground_truth (numpy array): ground truth data
+        lats (numpy array): array of latitudes corresponding to the SST data used in training
+        longs (numpy array): array of longitudes corresponding to SST data used in training
+    
+    Returns:
+        metrics_weights (numpy array): metric weights either using areas or all ones
+    """
+    if weights is not None and arg_weighting:
+        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
+        metric_weights = weights
+    elif weights is not None and not arg_weighting:
+        # Case where area-weighting was used for training AND we don't want to do area-weighted metrics
+        metric_weights = np.ones(ground_truth.shape[-1])
+    elif weights is None and arg_weighting:
+        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
+        resolution = infer_resolution(lats)
+        grid = LatLongGrid(args.area, resolution)
+        metric_weights = grid.get_area_weights(lats, longs)
+    else:
+        # weights is None and not arg_weighting:
+        # Case where area-weighting wasn't used for training AND we don't want to do weighted metrics
+        metric_weights = np.ones(ground_truth.shape[-1])
+
+    return metric_weights
