@@ -84,7 +84,8 @@ if __name__ == "__main__":
 
         # ---------- Metrics ----------
         model_seed_var = {}
-        metric_weights = metric_weighting(weights, args.weighted, ground_truth, lats, longs)
+        metric_weights = metric_weighting(area=args.area, arg_weighting=args.weighted,
+                                          lats=lats, longs=longs, weights=weights, y_true=ground_truth)
         print(f"EXPERIMENT (seed={seed}): {path}")
         for name in args.models:
             print(f"MODEL: {name}")
