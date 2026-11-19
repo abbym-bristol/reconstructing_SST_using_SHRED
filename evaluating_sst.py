@@ -13,6 +13,7 @@ import pandas as pd
 from helper_functions.area_weighting import LatLongGrid, infer_resolution
 from helper_functions.evaluation import (
     evaluate_metrics,
+    metric_weighting,
     plot_area_weighted_mean_error,
     plot_area_weighted_mean_SST,
     plot_latitude_integrated_mean_error,
@@ -20,47 +21,11 @@ from helper_functions.evaluation import (
 from helper_functions.saving import unpack_metadata
 from reconstructing_sst import list_of_strings, load_dataset
 
-np.random.seed(42)
-random.seed(42)
-
 plt.rcParams.update({'font.size': 16})
 
 # Global variable
 VALID_MODELS = {"SHRED-LSTM", "SHRED-GRU", "SDN", "POD", "RBFI"}
 
-
-def metric_weighting(weights, arg_weighting):
-    """Configure weighting for metrics
-
-    Optional to evaluate metrics using area-weighting. 
-        - If desired, arg_weighted will be True
-        - But training may not have used weights, if not they won't be in meta data and will need to be configured
-
-    Args:
-        weights (numpy array): Area weights used in training,
-            either corresponding to the predicted full-field shape or NONE
-        arg_weighting (bool): Whether to use area-weighting for metrics
-    
-    Returns:
-        metrics_weights (numpy array): metric weights either using areas or all ones
-    """
-    if weights is not None and arg_weighting:
-        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
-        metric_weights = weights
-    elif weights is not None and not arg_weighting:
-        # Case where area-weighting was used for training AND we don't want to do area-weighted metrics
-        metric_weights = np.ones(ground_truth.shape[-1])
-    elif weights is None and arg_weighting:
-        # Case where area-weighting wasn't used for training AND we want to do area-weighted metrics
-        resolution = infer_resolution(lats)
-        grid = LatLongGrid(args.area, resolution)
-        metric_weights = grid.get_area_weights(lats, longs)
-    else:
-        # weights is None and not arg_weighting:
-        # Case where area-weighting wasn't used for training AND we don't want to do weighted metrics
-        metric_weights = np.ones(ground_truth.shape[-1])
-
-    return metric_weights
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -112,7 +77,8 @@ if __name__ == "__main__":
     # else not needed, because of args restriction
 
     # ---------- Metrics ----------
-    metric_weights = metric_weighting(weights, args.weighted)
+    metric_weights = metric_weighting(area=args.area, arg_weighting=args.weighted,
+                                      lats=lats, longs=longs, weights=weights, y_true=ground_truth)
     print(f"EXPERIMENT: {exp_path}")
     for name in args.models:
         evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
