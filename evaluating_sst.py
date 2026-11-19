@@ -2,7 +2,6 @@
 # Standard imports
 import argparse
 import os
-import random
 
 # Third-party imports
 import matplotlib.pyplot as plt
@@ -61,7 +60,8 @@ if __name__ == "__main__":
     base_dir = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
     base_path = os.path.join(args.filepath, base_dir)
 
-    seed_variance_results = {}
+    model_seed_var = {}
+    model_seed_relative_errors = {}  # relative error for each seed
     for seed in args.seeds:
         path = os.path.join(base_path, f"seed_{seed}")
         ground_truth = np.load(path+"/truth.npy")  # y_true is the same for all models
@@ -83,33 +83,54 @@ if __name__ == "__main__":
         # else not needed, because of args restriction
 
         # ---------- Metrics ----------
-        model_seed_var = {}
+        model_seed_var[seed] = {}  #  per‑seed within‑seed variance
+        model_seed_relative_errors[seed] = {}
         metric_weights = metric_weighting(area=args.area, arg_weighting=args.weighted,
                                           lats=lats, longs=longs, weights=weights, y_true=ground_truth)
         print(f"EXPERIMENT (seed={seed}): {path}")
         for name in args.models:
             print(f"MODEL: {name}")
-            metrics = evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
-            model_seed_var[name] = metrics["variance"]
-        seed_variance_results[seed] = model_seed_var
+            metrics = evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights, print_results=False)
+            model_seed_var[seed][name] = metrics["variance"]
+            rel_err = np.linalg.norm(test_recons[name] - ground_truth) / np.linalg.norm(ground_truth)
+            model_seed_relative_errors[seed][name] = rel_err
+            print(f"{name} test relative reconstruction error: {rel_err:.4f}")
+            print(f"{name} test variance: {metrics["variance"]:.4f}")
+
         # ---------- Area-weighted evaluations ----------
         # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
-        if weights is not None:
-            graph_weights = weights
-        else:
-            resolution = infer_resolution(lats)
-            grid = LatLongGrid(args.area, resolution)
-            graph_weights = grid.get_area_weights(lats, longs)
+        # if weights is not None:
+        #     graph_weights = weights
+        # else:
+        #     resolution = infer_resolution(lats)
+        #     grid = LatLongGrid(args.area, resolution)
+        #     graph_weights = grid.get_area_weights(lats, longs)
 
-        # ---------- Area-weighted mean SST over time ----------
-        plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
-                                    save_path=path, test_indices=TEST_INDICES)
+        # # ---------- Area-weighted mean SST over time ----------
+        # plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+        #                             save_path=path, test_indices=TEST_INDICES)
 
-        # ---------- Area-weighted mean error in SST over time ----------
-        difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
-                                                   save_path=path, test_indices=TEST_INDICES)
+        # # ---------- Area-weighted mean error in SST over time ----------
+        # difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+        #                                            save_path=path, test_indices=TEST_INDICES)
 
-        # ---------- Latitude-integrated mean error in SST ----------
-        plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
+        # # ---------- Latitude-integrated mean error in SST ----------
+        # plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
 
-    print(seed_variance_results)
+    # print(model_seed_var)
+
+# ---------- Seed‑level robustness analysis (new) ----------
+# For each model, compute the variance of relative errors across all seeds.
+model_seed_variance_across_seeds = {}   # e.g., {model: variance_across_seeds}
+
+for model_name in args.models:
+    # Collect relative errors across seeds
+    seed_errors = [model_seed_relative_errors[seed][model_name] for seed in args.seeds]
+    # If only one seed, variance is 0 (but we have multiple seeds)
+    if len(seed_errors) > 1:
+        model_seed_variance_across_seeds[model_name] = np.var(seed_errors)
+    else:
+        model_seed_variance_across_seeds[model_name] = 0.0
+
+    # Now you can report or store these values:
+    print(f"Model {model_name} seed‑level variance (across seeds): {model_seed_variance_across_seeds[model_name]}")
