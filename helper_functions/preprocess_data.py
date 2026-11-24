@@ -5,12 +5,48 @@ Helper functions for preprocessing ME4OH data SST OFAM3 data for the SHRED algor
 Prerequisites: load_sst_ofams3_data.py must be run first, producing NA basin data stored under "Data/OFAM3/NA/"
 
 """
+# Standard imports
 import numpy as np
 import torch
+
+# Third-party imports
+from sklearn.preprocessing import StandardScaler
+
+# Local imports
+from helper_functions.noaa_data import crop_to_area, load_data
+from helper_functions.ofam3_data import load_files
+from helper_functions.pod import qr_place, svd_basis
 
 LAGS = 52  # The OFAM3 SST data is sampled weekly (unknown currently whether these are averaged or just for one day each week)
 
 np.random.seed(42)
+
+
+def load_dataset(area, dataset):
+    """For a given dataset type (OFAM3 or NOAA) load and filter to a specified area (world, NA or GS)
+    
+    Args:
+        area (str): area of ocean to use
+        dataset (str): dataset type to use
+
+    Returns:
+        data (numpy array): SST data
+        lats (numpy array): array of latitudes corresponding to SST values
+        longs (numpy array): array of longitudes corresponding to SST values
+        dates (numpy array): array of dates corresponding to SST values
+    """
+    if dataset == "NOAA":
+        data, lats, longs, dates = load_data()
+
+        if area != "world":
+            data, lats, longs = crop_to_area(temps=data, lats=lats, longs=longs, area=area)
+
+    elif dataset == "OFAM3":
+        data, dates, lats, longs = load_files(file_path=f"Data/OFAM3/{area}/")
+
+    print(f"Number of weeks in data: {data.shape[0]}, number of lat/long positions: {data.shape[1]}")
+
+    return data, lats, longs, dates
 
 
 class TimeSeriesDataset(torch.utils.data.Dataset):
@@ -95,3 +131,61 @@ def convert_to_anomaly(data):
     test_anomaly = test - train_bulk_mean
 
     return train_anomaly, val_anomaly, test_anomaly, train_bulk_mean
+
+# ---------- reconstructing_sst.py specific helper ----------
+
+def preprocess_data(anomaly, data, dates, lats, longs, num_sensors, sensor_placement):
+    """Preprocess data with varying numbers of static sensors
+ 
+    Args:
+        anomaly (Bool): whether or not to use anomalies
+        data (numpy array): SST data
+        dates (numpy array): array of dates corresponding to SST values
+        lats, longs (numpy array): coordinates of each grid point in data
+        num_sensors (int): number of synthetic sensors to use
+        sensor_placement (str): type of sensor placement to use; choices are random or QR
+ 
+    Returns:
+        data_dict (dict): normalised float32 train, val and test data (before sequencing)
+        dates_dict (dict): dates that correspond with the train, val and test data in data_dict
+        sc (class): MinMaxScaler() class fitted on the training data
+        sensor_locations (numpy array): sensor locations corresponding to indices in the full-field data
+        sensor_coords (tuple): (longs, lats) of each sensor
+        U_r (numpy array): POD basis of the first num_sensors POD modes
+        bulk_mean (numpy array or None): training mean if anomaly is True
+    """
+    print("Preprocessing data...")
+    train_data, val_data, test_data, train_dates, val_dates, test_dates = split_ordered_data(data, dates, all_dates=True)
+    dates_dict = {"train": train_dates, "val": val_dates, "test": test_dates}
+    bulk_mean = None
+    if anomaly:
+        train_data, val_data, test_data, bulk_mean = convert_to_anomaly((train_data, val_data, test_data))
+
+    # Normalise data. 
+    # Cast to float32 here so every model (torch or numpy) sees
+    # bit-identical inputs and targets - torch models need float32 anyway.
+    sc = StandardScaler()
+    sc = sc.fit(train_data)  # Computes min and max from training data only (prevent data leakage)
+    data_dict = {
+        "train": sc.transform(train_data).astype(np.float32),
+        "val": sc.transform(val_data).astype(np.float32),
+        "test": sc.transform(test_data).astype(np.float32),
+    }
+    print(f"Mean of standardised training data: {np.mean(data_dict["train"])}")
+    print(f"Std of standardised training data: {np.std(data_dict["train"])}")
+    print(f"Mean of standardised test data: {np.mean(data_dict["test"])}")
+    print(f"Mean of standardised test data: {np.std(data_dict["test"])}")
+
+    # Sensor placement
+    if sensor_placement == "random":
+        sensor_locations = np.random.choice(data.shape[1], size=num_sensors, replace=False)
+        U_r = svd_basis(train_data, num_sensors)  # Set POD basis
+    elif sensor_placement == "QR":
+        sensor_locations, U_r = qr_place(train_data, num_sensors)
+    else:
+        raise ValueError("Incorrect placement of sensors specified")
+
+    sensor_coords=(longs[sensor_locations], lats[sensor_locations])
+    print(f"Sensor location indexes will be: {sensor_locations}")
+
+    return data_dict, dates_dict, sc, sensor_locations, sensor_coords, U_r, bulk_mean
