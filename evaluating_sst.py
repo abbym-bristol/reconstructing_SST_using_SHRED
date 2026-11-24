@@ -75,13 +75,14 @@ if __name__ == "__main__":
         test_recons[name] = np.load(f"{path}/{name}/recons.npy")
 
     if args.dataset == "NOAA":
-            TEST_INDICES = {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"}
+        TEST_INDICES = {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"}
     elif args.dataset == "OFAM3":
         TEST_INDICES = {"values": test_dates, "label": "Week date"}
     # else not needed, because of args restriction
 
     # ---------- Metrics ----------
-    metric_weights = metric_weighting(weights, args.weighted)
+    metric_weights = metric_weighting(area=args.area, arg_weighting=args.weighted,
+                                      lats=lats, longs=longs, weights=weights, y_true=ground_truth)
     print(f"EXPERIMENT: {exp_path}")
     for name in args.models:
         evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
