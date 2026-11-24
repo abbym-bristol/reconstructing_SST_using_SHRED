@@ -85,7 +85,8 @@ if __name__ == "__main__":
                                       lats=lats, longs=longs, weights=weights, y_true=ground_truth)
     print(f"EXPERIMENT: {exp_path}")
     for name in args.models:
-        evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
+        print(f"MODEL: {name}")
+        metrics = evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
 
     # ---------- Area-weighted evaluations ----------
     # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting

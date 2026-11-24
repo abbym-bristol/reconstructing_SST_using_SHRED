@@ -80,16 +80,17 @@ def weighted_r2(y_true, y_pred, weights):
     return np.mean(r2_by_week)  # mean at the end to treat every week equally
 
 
-def evaluate_metrics(y_true, y_pred, weights):
+def evaluate_metrics(y_true, y_pred, weights, print_results=True):
     """Calculate metrics from test reconstructions
 
     Args:
         y_true (numpy array): corresponding true y (full-field) for each sequence (week) in test set
         y_pred (numpy array): predicted y (full-field) for each sequence (week) in test set
-        weights (numpy array): Area weights corresponding to the predicted full-field shape (y_pred.shape[1])
+        weights (numpy array): area weights corresponding to the predicted full-field shape (y_pred.shape[1])
+        print_results (bool): whether to print results out
 
     Returns:
-        None
+        metrics (dict): dictionary of metrics results
     """
     # Check if all weights are 1
     label = "unweighted" if np.all(weights == 1) else "area-weighted"
@@ -101,9 +102,10 @@ def evaluate_metrics(y_true, y_pred, weights):
         "R2": weighted_r2(y_true, y_pred, weights)
     }
 
-    print(f"Metrics ({label}):")
-    for k,v in metrics.items():
-        print(f"{k}:\t{v:.3f}")
+    if print_results:
+        print(f"Metrics ({label}):")
+        for k,v in metrics.items():
+            print(f"{k}:\t{v:.3f}")
 
     return metrics
 
