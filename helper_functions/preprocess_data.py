@@ -44,7 +44,7 @@ def load_dataset(area, dataset):
     elif dataset == "OFAM3":
         data, dates, lats, longs = load_files(file_path=f"Data/OFAM3/{area}/")
 
-    print(f"Number of weeks in data: {data.shape[0]}, number of lat/long positions: {data.shape[1]}")
+    print(f"\tNumber of weeks in data: {data.shape[0]}, number of lat/long positions: {data.shape[1]}")
 
     return data, lats, longs, dates
 
@@ -171,10 +171,10 @@ def preprocess_data(anomaly, data, dates, lats, longs, num_sensors, sensor_place
         "val": sc.transform(val_data).astype(np.float32),
         "test": sc.transform(test_data).astype(np.float32),
     }
-    print(f"Mean of standardised training data: {np.mean(data_dict["train"])}")
-    print(f"Std of standardised training data: {np.std(data_dict["train"])}")
-    print(f"Mean of standardised test data: {np.mean(data_dict["test"])}")
-    print(f"Mean of standardised test data: {np.std(data_dict["test"])}")
+    print(f"\tMean of standardised training data: {np.mean(data_dict["train"]):.2f}")
+    print(f"\tStd of standardised training data: {np.std(data_dict["train"]):.2f}")
+    print(f"\tMean of standardised test data: {np.mean(data_dict["test"]):.2f}")
+    print(f"\tStd of standardised test data: {np.std(data_dict["test"]):.2f}")
 
     # Sensor placement
     if sensor_placement == "random":
@@ -186,6 +186,6 @@ def preprocess_data(anomaly, data, dates, lats, longs, num_sensors, sensor_place
         raise ValueError("Incorrect placement of sensors specified")
 
     sensor_coords=(longs[sensor_locations], lats[sensor_locations])
-    print(f"Sensor location indexes will be: {sensor_locations}")
+    print(f"\tSensor location indexes will be: {sensor_locations}")
 
     return data_dict, dates_dict, sc, sensor_locations, sensor_coords, U_r, bulk_mean

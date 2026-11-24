@@ -69,7 +69,7 @@ def shred_sdn_reconstructions(windows, hidden_dim, model_type, num_sensors, num_
     val_ds = to_torch_dataset(windows["val"], input_key, device)
 
     # Train and validate model
-    validation_errors = models.fit(model, train_ds, val_ds, batch_size=64, num_epochs=1000, lr=1e-3, verbose=True, patience=5, weights=weights)
+    validation_errors = models.fit(model, train_ds, val_ds, batch_size=64, num_epochs=1000, lr=1e-3, verbose=False, patience=5, weights=weights)
     print('Validation Reconstruction Error: ', validation_errors)
 
     # Test
