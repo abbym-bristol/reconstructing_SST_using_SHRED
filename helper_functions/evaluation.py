@@ -145,7 +145,8 @@ def mask_array_by_lat_long(array, lats, longs, area="GS"):
 
 # ---------- Plotting functions ----------
 
-def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, save_path, test_indices, colour_dict=COLOURS):
+def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, save_path, test_indices, colour_dict=COLOURS,
+                               y_pred_std=None):
     """Area-weighted mean SST over time
     
     Args:
@@ -155,6 +156,8 @@ def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, save_path, test_in
         save_path (str): path to save figure under
         test_indices (dict): {"values": test indices to use, "label": x-axis label to use}
         colour_dict (dict, optional): keys: model names, values: colours specified in hexcode. Defaults to COLOURS.
+        y_pred_std (dict, optional): keys: model names, values: standard deviations of area-weighted mean
+            reconstructions over test indices. When provided, shades the mean +/- one standard deviation.
 
     Returns:
         None
@@ -174,6 +177,16 @@ def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, save_path, test_in
     plt.figure()
     for name in y_pred.keys():
         plt.plot(sst_mean_df[name], c=colour_dict[name], ls='-', label=name)
+        if y_pred_std is not None:
+            spread = np.asarray(y_pred_std[name])
+            plt.fill_between(
+                sst_mean_df.index,
+                sst_mean_df[name].to_numpy() - spread,
+                sst_mean_df[name].to_numpy() + spread,
+                color=colour_dict[name],
+                alpha=0.2,
+                label=f"{name} +/- 1 SD",
+            )
     plt.plot(sst_mean_df["Truth"], c=colour_dict["Truth"], ls='--', label="Truth")
     plt.xticks(rotation=90)
     plt.xlabel(test_indices["label"])

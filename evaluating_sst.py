@@ -3,6 +3,7 @@
 import argparse
 import os
 import random
+from glob import glob
 
 # Third-party imports
 import matplotlib.pyplot as plt
@@ -10,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 # Local imports
-from helper_functions.area_weighting import LatLongGrid, infer_resolution
+from helper_functions.area_weighting import LatLongGrid, area_weighted_mean, infer_resolution
 from helper_functions.evaluation import (
     evaluate_metrics,
     metric_weighting,
@@ -62,48 +63,98 @@ if __name__ == "__main__":
     _, lats, longs, _ = load_dataset(args.area, args.dataset)
 
     exp_path = f"{args.dataset}/{args.area}/{args.sensor_placement}/{args.version}_n{args.num_sensors}_l{args.lags}"
-    path = os.path.join(args.filepath, exp_path)
-    ground_truth = np.load(path+"/truth.npy")
-    metadata = unpack_metadata(path+"/metadata.json")
-    sensor_locs = metadata["sensor_locations"]
-    sensor_coords = metadata["sensor_coords"]
-    test_dates = metadata["test_lag_dates"]
-    weights = metadata["weights"]
-
-    test_recons = {}
-    for name in args.models:
-        test_recons[name] = np.load(f"{path}/{name}/recons.npy")
-
-    if args.dataset == "NOAA":
-        TEST_INDICES = {"values": np.arange(len(test_recons[args.models[0]])), "label": "Test index"}
-    elif args.dataset == "OFAM3":
-        TEST_INDICES = {"values": test_dates, "label": "Week date"}
-    # else not needed, because of args restriction
-
-    # ---------- Metrics ----------
-    metric_weights = metric_weighting(area=args.area, arg_weighting=args.weighted,
-                                      lats=lats, longs=longs, weights=weights, y_true=ground_truth)
     print(f"EXPERIMENT: {exp_path}")
-    for name in args.models:
-        print(f"MODEL: {name}")
-        metrics = evaluate_metrics(y_true=ground_truth, y_pred=test_recons[name], weights=metric_weights)
+    results_path = os.path.join(args.filepath, exp_path)
+    print(results_path)
 
-    # ---------- Area-weighted evaluations ----------
-    # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
+    loc_paths = [f for f in sorted(glob(os.path.join(results_path, "*/")))]
+    # print(loc_paths)
+    metrics_dict = {}
+    test_recons_dict = {}
+
+    for name in args.models:
+        r2 = []
+        mae = []
+        mse = []
+        loc_recons = {}
+        for path in loc_paths:
+            ground_truth = np.load(path+"/truth.npy")
+            metadata = unpack_metadata(path+"/metadata.json")
+            sensor_locs = metadata["sensor_locations"]
+            sensor_coords = metadata["sensor_coords"]
+            test_dates = metadata["test_lag_dates"]
+            # TODO - Store weights only once in reconstructing_sst.py, and use same for all locs
+            #       Then can have experiment level weight stored in metadata to pull and use here!!!
+            weights = metadata["weights"]
+            test_recons = np.load(f"{path}/{name}/recons.npy")
+            loc_recons[os.path.basename(os.path.normpath(path))] = test_recons
+
+            if args.dataset == "NOAA":
+                TEST_INDICES = {"values": np.arange(len(test_recons)), "label": "Test index"}
+            elif args.dataset == "OFAM3":
+                TEST_INDICES = {"values": test_dates, "label": "Week date"}
+            # else not needed, because of args restriction
+
+            # ---------- Metrics ----------
+            metric_weights = metric_weighting(area=args.area, arg_weighting=args.weighted,
+                                            lats=lats, longs=longs, weights=weights, y_true=ground_truth)
+            
+            metrics = evaluate_metrics(y_true=ground_truth, y_pred=test_recons, weights=metric_weights, print_results=False)
+            r2.append(metrics["R2"])
+            mse.append(metrics["MSE"])
+            mae.append(metrics["MAE"])
+        
+        test_recons_dict[name] = loc_recons
+
+        # Combine for all models
+        metrics_dict[name] = {
+            "R2": f"{np.mean(r2):.4f} +/- {np.std(r2):.4f}",
+            "MSE": f"{np.mean(mse):.4f} +/- {np.std(mse):.4f}",
+            "MAE": f"{np.mean(mae):.4f} +/- {np.std(mae):.4f}"
+            }
+        
+    # Print for all models
+    print(metrics_dict)
+
+    # ---------- Area-weighted evaluations: FOR EACH SENSOR LOC ----------
+    # TODO - Store weights only once in reconstructing_sst.py, and use same for all locs
+    #       Then can have experiment level weight stored in metadata to pull and use here!!!
     if weights is not None:
-        graph_weights = weights
+        graph_weights = weights  # See todo above: I know that these are the same for all locs so can do this for now
     else:
         resolution = infer_resolution(lats)
         grid = LatLongGrid(args.area, resolution)
         graph_weights = grid.get_area_weights(lats, longs)
-    
-    # ---------- Area-weighted mean SST over time ----------
-    plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
-                                save_path=path, test_indices=TEST_INDICES)
 
-    # ---------- Area-weighted mean error in SST over time ----------
-    difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
-                                               save_path=path, test_indices=TEST_INDICES)
+    # for path in loc_paths:
+        # test_recons = {}
+        # for model_name, recons in test_recons_dict.items():
+        #     test_recons[model_name] = recons[path.split("/")[-1]]
+        # # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
+        # # ---------- Area-weighted mean SST over time ----------
+        # plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+        #                             save_path=path, test_indices=TEST_INDICES)
 
-    # ---------- Latitude-integrated mean error in SST ----------
-    plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
+        # # ---------- Area-weighted mean error in SST over time ----------
+        # difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+        #                                            save_path=path, test_indices=TEST_INDICES)
+
+        # # ---------- Latitude-integrated mean error in SST ----------
+        # plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
+
+
+    # ---------- Area-weighted evaluations: SUMMARY FOR ALL SENSOR LOCS ----------
+    mean_test_recons = {}
+    std_test_recons = {}
+    for name in args.models:
+        loc_recons = list(test_recons_dict[name].values())
+        stacked = np.stack(loc_recons, axis=0)
+        mean_test_recons[name] = np.mean(stacked, axis=0)
+        loc_area_weighted_means = np.stack(
+            [area_weighted_mean(data=recons, area_weights=graph_weights) for recons in loc_recons],
+            axis=0,
+        )
+        std_test_recons[name] = np.std(loc_area_weighted_means, axis=0)
+
+    plot_area_weighted_mean_SST(y_pred=mean_test_recons, y_true=ground_truth, area_weights=graph_weights,
+                                save_path=results_path, test_indices=TEST_INDICES, y_pred_std=std_test_recons)
