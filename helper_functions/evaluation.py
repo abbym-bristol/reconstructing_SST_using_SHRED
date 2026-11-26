@@ -146,6 +146,8 @@ def mask_array_by_lat_long(array, lats, longs, area="GS"):
 
 # ---------- Plotting functions ----------
 
+# TODO - Plot spread on single location plots, by doing IQR shading??? What's the appropriate spread on the global mean timeseries? Is there one?
+
 def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, save_path, test_indices, colour_dict=COLOURS,
                                y_pred_std=None):
     """Area-weighted mean SST over time
@@ -201,7 +203,7 @@ def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, save_path, test_in
     plt.close()
 
 
-def plot_area_weighted_mean_error(y_true, y_pred, area_weights, save_path, test_indices, colour_dict=COLOURS):
+def plot_area_weighted_mean_error(y_true, y_pred, area_weights, save_path, test_indices, colour_dict=COLOURS, y_pred_std=None):
     """Area-weighted mean error in SST over time
     
     Args:
@@ -211,6 +213,8 @@ def plot_area_weighted_mean_error(y_true, y_pred, area_weights, save_path, test_
         save_path (str): path to save figure under
         test_indices (dict): {"values": test indices to use, "label": x-axis label to use}
         colour_dict (dict, optional): keys: model names, values: colours specified in hexcode. Defaults to COLOURS.
+        y_pred_std (dict, optional): keys: model names, values: standard deviations of area-weighted mean
+            reconstructions over test indices. When provided, shades the mean +/- one standard deviation.
 
     Returns:
         diff_dict (dict): keys: model names, values: difference between y_pred[model name] and y_true
@@ -234,6 +238,18 @@ def plot_area_weighted_mean_error(y_true, y_pred, area_weights, save_path, test_
     plt.figure(figsize=(8,8))
     for name, data in sst_diff_df.items():
         plt.plot(data, c=colour_dict[name], label=name)
+        if y_pred_std is not None:
+            # spread = area_weighted_std(sigma=y_pred_std[name], area_weights=area_weights)  # If the errors are independent
+            spread = area_weighted_mean(y_pred_std[name], area_weights)  
+                # This is the upper bound of the spread if the cell errors are strongly/fully correlated
+            plt.fill_between(
+                sst_diff_df.index,
+                sst_diff_df[name].to_numpy() - spread,
+                sst_diff_df[name].to_numpy() + spread,
+                color=colour_dict[name],
+                alpha=0.2,
+                label=f"{name} +/- 1 SD",
+            )
     plt.xticks(rotation=90)
     plt.hlines(0, test_indices["values"][0], test_indices["values"][-1], colors=['k'], linestyles=['--'], label="Truth")
     plt.xlim(test_indices["values"][0], test_indices["values"][-1])

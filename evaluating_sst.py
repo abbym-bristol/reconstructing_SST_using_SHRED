@@ -157,3 +157,5 @@ if __name__ == "__main__":
 
     plot_area_weighted_mean_SST(y_pred=mean_test_recons, y_true=ground_truth, area_weights=graph_weights,
                                 save_path=results_path, test_indices=TEST_INDICES, y_pred_std=std_test_recons)
+    difference = plot_area_weighted_mean_error(y_pred=mean_test_recons, y_true=ground_truth, area_weights=graph_weights,
+                                               save_path=results_path, test_indices=TEST_INDICES, y_pred_std=std_test_recons)
