@@ -9,6 +9,7 @@ import pandas as pd
 from helper_functions.area_weighting import (
     LatLongGrid,
     area_weighted_mean,
+    area_weighted_std,
     infer_resolution,
 )
 
@@ -175,10 +176,12 @@ def plot_area_weighted_mean_SST(y_true, y_pred, area_weights, save_path, test_in
     sst_mean_df = sst_mean_df.set_index(test_indices["label"])
 
     plt.figure()
-    for name in y_pred.keys():
+    for name in y_pred.keys():  # For each model
         plt.plot(sst_mean_df[name], c=colour_dict[name], ls='-', label=name)
         if y_pred_std is not None:
-            spread = np.asarray(y_pred_std[name])
+            # spread = area_weighted_std(sigma=y_pred_std[name], area_weights=area_weights)  # If the errors are independent
+            spread = area_weighted_mean(y_pred_std[name], area_weights)  
+                # This is the upper bound of the spread if the cell errors are strongly/fully correlated
             plt.fill_between(
                 sst_mean_df.index,
                 sst_mean_df[name].to_numpy() - spread,

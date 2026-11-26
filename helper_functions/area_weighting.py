@@ -79,9 +79,27 @@ def area_weighted_mean(data, area_weights):
     Returns:
         mean (numpy array): weighted average of data, weighted by the area of each grid square
     """
-    mean = [np.sum(d * area_weights)/np.sum(area_weights) for d in data]
+    mean = data @ area_weights/np.sum(area_weights)
+    # equivalent to: [np.sum(d * area_weights)/np.sum(area_weights) for d in data]
 
     return mean
+
+
+def area_weighted_std(sigma, area_weights):
+    """Standard deviation of data weighted by area of each grid square on the globe
+
+    Args:
+        sigma (numpy array): standard deviations corresponding to data in area_weighted_mean
+            of shape (timesteps, full-field); where data is a mean of multiple locations.
+        area_weights (numpy array): area weights corresponding to the area of each
+            grid cell (in m^2) of the full-field grid, shape (full-field,)
+
+    Returns:
+        std (numpy array): propagated standard deviations, shape (timesteps,)
+    """  # noqa: D401
+    std = np.sqrt(sigma**2 @ area_weights**2) / np.sum(area_weights)
+    # equivalent to: np.sqrt(np.sum(area_weights**2 * y_pred_std[name]**2, axis=1)) / area_weights.sum()
+    return std
 
 
 class LatLongGrid():

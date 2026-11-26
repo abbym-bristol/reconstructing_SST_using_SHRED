@@ -37,6 +37,14 @@ Models:
 # Usage
 `python reconstructing_sst.py v3 NOAA SHRED-LSTM,SHRED-GRU,SDN,POD,RBFI 30`
 
+
+# Evaluation
+Area-weighted mean:
+$$\bar{x}_w = \frac{\sum_i w_i x_i}{\sum_i w_i}$$
+
+Error propagation:
+$$\sigma_{\bar{x}_w} = \frac{\sqrt{\sum_i w_i^2 \sigma_i^2}}{\sum_i w_i}$$
+
 # References:
 [[1]](https://psl.noaa.gov/data/gridded/data.noaa.oisst.v2.html) NOAA dataset origin, https://psl.noaa.gov/data/gridded/data.noaa.oisst.v2.html
 
