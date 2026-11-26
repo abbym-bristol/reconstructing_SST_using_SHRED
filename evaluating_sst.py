@@ -8,16 +8,15 @@ from glob import glob
 # Third-party imports
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 # Local imports
 from helper_functions.area_weighting import (
     LatLongGrid,
-    area_weighted_mean,
     infer_resolution,
 )
 from helper_functions.evaluation import (
     evaluate_metrics,
+    mean_and_std_locations,
     metric_weighting,
     plot_area_weighted_mean_error,
     plot_area_weighted_mean_SST,
@@ -130,32 +129,29 @@ if __name__ == "__main__":
         grid = LatLongGrid(args.area, resolution)
         graph_weights = grid.get_area_weights(lats, longs)
 
-    # for path in loc_paths:
-    #     test_recons = {}
-    #     for model_name, recons in test_recons_dict.items():
-    #         test_recons[model_name] = recons[path.split("/")[-1]]
-    #     # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
-    #     # ---------- Area-weighted mean SST over time ----------
-    #     plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
-    #                                 save_path=path, test_indices=TEST_INDICES)
+    for path in loc_paths:
+        test_recons = {}
+        for model_name, recons in test_recons_dict.items():
+            test_recons[model_name] = recons[path.split("/")[-1]]
+        # Area-weighted evaluation -> has to use area weighting regardless of whether the model was trained using weighting
+        # ---------- Area-weighted mean SST over time ----------
+        plot_area_weighted_mean_SST(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+                                    save_path=path, test_indices=TEST_INDICES)
 
-    #     # ---------- Area-weighted mean error in SST over time ----------
-    #     difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
-    #                                                save_path=path, test_indices=TEST_INDICES)
+        # ---------- Area-weighted mean error in SST over time ----------
+        difference = plot_area_weighted_mean_error(y_pred=test_recons, y_true=ground_truth, area_weights=graph_weights,
+                                                   save_path=path, test_indices=TEST_INDICES)
 
-    #     # ---------- Latitude-integrated mean error in SST ----------
-    #     plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
+        # ---------- Latitude-integrated mean error in SST ----------
+        plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats, save_path=path)
 
 
     # ---------- Area-weighted evaluations: SUMMARY FOR ALL SENSOR LOCS ----------
-    mean_test_recons = {}
-    std_test_recons = {}
-    for name in args.models:
-        stacked = np.stack(list(test_recons_dict[name].values()), axis=0)
-        mean_test_recons[name] = np.mean(stacked, axis=0)
-        std_test_recons[name] = np.std(stacked, axis=0)
+    mean_test_recons, std_test_recons = mean_and_std_locations(test_recons_dict)
 
     plot_area_weighted_mean_SST(y_pred=mean_test_recons, y_true=ground_truth, area_weights=graph_weights,
                                 save_path=results_path, test_indices=TEST_INDICES, y_pred_std=std_test_recons)
     difference = plot_area_weighted_mean_error(y_pred=mean_test_recons, y_true=ground_truth, area_weights=graph_weights,
                                                save_path=results_path, test_indices=TEST_INDICES, y_pred_std=std_test_recons)
+    plot_latitude_integrated_mean_error(area=args.area, diff_dict=difference, lats=lats,
+                                        save_path=results_path, diff_std_dict=std_test_recons)

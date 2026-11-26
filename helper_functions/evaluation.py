@@ -263,7 +263,8 @@ def plot_area_weighted_mean_error(y_true, y_pred, area_weights, save_path, test_
     return diff_dict
 
 
-def plot_latitude_integrated_mean_error(area, diff_dict, lats, save_path, colour_dict=COLOURS):
+def plot_latitude_integrated_mean_error(area, diff_dict, lats, save_path, colour_dict=COLOURS,
+                                       diff_std_dict=None):
     """Latitude-integrated mean error in SST
 
     Args:
@@ -272,21 +273,46 @@ def plot_latitude_integrated_mean_error(area, diff_dict, lats, save_path, colour
         lats (numpy array): array of latitudes covered by diff_dict values
         save_path (str): path to save figure under
         colour_dict (dict, optional): keys: model names, values: colours specified in hexcode. Defaults to COLOURS.
+        diff_std_dict (dict, optional): keys: model names, values: standard deviations of the errors at each
+            test index and grid cell. Used to shade a conservative spread band.
 
     Returns:
         None
     """
     avg_all_time_lat_avg_diffs = {}
+    avg_all_time_lat_avg_stds = {}
+    latitude_values = np.unique(lats)
     for name, data in diff_dict.items():
         # For each reconstruction at a set "date", find the average difference at each latitude
-        latitude_avg_diffs = np.array([pd.Series(diff_at_time).groupby(lats).mean().to_numpy() for diff_at_time in data])
+        latitude_avg_diffs = np.array([
+            pd.Series(diff_at_time).groupby(lats).mean().reindex(latitude_values).to_numpy()
+            for diff_at_time in data
+        ])
 
         # For each latitude, calculate the mean difference over all time
-        avg_all_time_lat_avg_diffs[name] = np.array([np.mean(latitude_avg_diffs.T[j]) for j in range(latitude_avg_diffs.shape[1])])
+        avg_all_time_lat_avg_diffs[name] = np.mean(latitude_avg_diffs, axis=0)
+
+        if diff_std_dict is not None:
+            # Conservative estimate -> not computed each std for each point
+            latitude_avg_stds = np.array([
+                pd.Series(std_at_time).groupby(lats).mean().reindex(latitude_values).to_numpy()
+                for std_at_time in diff_std_dict[name]
+            ])
+            avg_all_time_lat_avg_stds[name] = np.mean(latitude_avg_stds, axis=0)
 
     plt.figure(figsize=(8,8))
     for name, vals in avg_all_time_lat_avg_diffs.items():
-        plt.plot(vals, np.unique(lats), c=colour_dict[name], label=name)
+        plt.plot(vals, latitude_values, c=colour_dict[name], label=name)
+        if diff_std_dict is not None:
+            spread = avg_all_time_lat_avg_stds[name]
+            plt.fill_betweenx(
+                latitude_values,
+                vals - spread,
+                vals + spread,
+                color=colour_dict[name],
+                alpha=0.2,
+                label=f"{name} +/- 1 SD",
+            )
     plt.vlines(0, min(lats), max(lats), colors=['k'], linestyles=['--'], label="Truth")
     if area == "world":
         plt.ylim(-90, 90)
@@ -338,3 +364,24 @@ def metric_weighting(area, arg_weighting, lats, longs, weights, y_true):
         metric_weights = np.ones(y_true.shape[-1])
 
     return metric_weights
+
+def mean_and_std_locations(test_recons_dict):
+    """Get mean and standard deviation across a number of reconstructions at varying sensor locations
+    
+    Args:
+        test_recons_dict (dict): 
+            keys: model names, 
+            values (dict): keys: locations {loc_i} and
+                           values: reconstructions made by model for each item in test set
+    
+    Returns:
+        mean_test_recons (dict): keys: model names, values: mean reconstruction SST, for each item in test set
+        std_test_recons (dict):  keys: model names, values: std in reconstruction SST, for each item in test set
+    """
+    mean_test_recons = {}
+    std_test_recons = {}
+    for name, data in test_recons_dict.items():
+        stacked = np.stack(list(data.values()), axis=0)
+        mean_test_recons[name] = np.mean(stacked, axis=0)
+        std_test_recons[name] = np.std(stacked, axis=0)
+    return mean_test_recons, std_test_recons
